@@ -3,7 +3,13 @@
 #include <cstdint>
 #include <string>
 #include <iostream>
+#include <vector>
+#include <functional>
+#include <stdio.h>
+#include <ctype.h>
 
+
+// Runtime
 namespace Xias {
 
 	struct _x_fieldID;
