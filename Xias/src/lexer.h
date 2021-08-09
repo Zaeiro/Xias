@@ -5,7 +5,9 @@
 #include <ctype.h>
 
 namespace Xias {
-	enum class TokenType : uint8_t {
+
+	enum class TokenType : uint8_t
+	{
 		Identifier = 0U,
 		String,
 		Number,
@@ -21,23 +23,26 @@ namespace Xias {
 
 	};
 
-	struct Token {
+	struct Token
+	{
 		TokenType type;
 		const char* value;
 	};
 
-
-	class Lexer {
+	class Lexer
+	{
 		std::vector<Token> tokens;
 
-		void PushToken(TokenType type, const char* value) {
+		void PushToken(TokenType type, const char* value)
+		{
 			Token token;
 			token.type = type;
 			token.value = value;
 			tokens.push_back(token);
 		}
 
-		int ParseIdentifier(int index, std::string code) {
+		int ParseIdentifier(int index, const std::string& code)
+		{
 			int startIndex = index;
 
 			while (code[index] != ' ') {
@@ -50,11 +55,13 @@ namespace Xias {
 		}
 
 	public:
-		std::vector<Token> Analyse(std::string code) {
+		std::vector<Token> Analyse(const std::string& code)
+		{
 			tokens.clear();
 
 			uint64_t index = 0;
-			while (index < code.length()) {
+			while (index < code.length())
+			{
 				std::function<int(int, std::string)> parser;
 
 				auto character = code[index];

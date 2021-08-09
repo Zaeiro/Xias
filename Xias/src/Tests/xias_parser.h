@@ -1,11 +1,14 @@
+#pragma once
+
 #include "Xias.h"
+
 #include <iostream>
 
-int main() {
+inline void test_lexer()
+{
 	Xias::Lexer lexer;
 
 	lexer.Analyse("print(\"hello world\")");
 	
 	std::cin.get();
-	return 0;
 }
