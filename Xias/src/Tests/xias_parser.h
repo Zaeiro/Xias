@@ -3,12 +3,15 @@
 #include "Xias.h"
 
 #include <iostream>
+#include <vector>
 
 inline void test_lexer()
 {
 	Xias::Lexer lexer;
 
-	lexer.Analyse("print(\"hello world\")");
+	std::vector<Xias::Token> tokens = lexer.Analyse("public string myString = \"Hello World\";");
+	lexer.PrintTokens(tokens);
 	
+	std::cout << "All tests done" << std::endl;
 	std::cin.get();
 }
