@@ -129,10 +129,12 @@ namespace Xias {
 				// check if literal
 
 				if (c == '=') { index = Parse(index, code, TokenType::Assignment, [=](char c) { return false; }); continue; }
-				if (c == '+') { index = Parse(index, code, TokenType::Operator, [=](char c) { return false; }); continue; }
-				if (c == '-') { index = Parse(index, code, TokenType::Operator, [=](char c) { return false; }); continue; }
+				if (c == '+') { index = Parse(index, code, TokenType::Operator, [=](char c) { return c == '+'; }); continue; }
+				if (c == '-') { index = Parse(index, code, TokenType::Operator, [=](char c) { return c == '-'; }); continue; }
 				if (c == '*') { index = Parse(index, code, TokenType::Operator, [=](char c) { return false; }); continue; }
 				if (c == '/') { index = Parse(index, code, TokenType::Operator, [=](char c) { return false; }); continue; }
+				if (c == '%') { index = Parse(index, code, TokenType::Operator, [=](char c) { return false; }); continue; }
+				if (c == '^') { index = Parse(index, code, TokenType::Operator, [=](char c) { return false; }); continue; }
 
 				if (c == '{') { index = Parse(index, code, TokenType::LCurly, [=](char c) { return false; }); continue; }
 				if (c == '}') { index = Parse(index, code, TokenType::RCurly, [=](char c) { return false; }); continue; }
@@ -140,7 +142,7 @@ namespace Xias {
 				if (c == '(') { index = Parse(index, code, TokenType::LParen, [=](char c) { return false; }); continue; }
 				if (c == ')') { index = Parse(index, code, TokenType::RParen, [=](char c) { return false; }); continue; }
 
-				if (c == ';') { index = Parse(index, code, TokenType::Semicolon, [=](char c) { return false; }); continue; }
+				if (c == ';') { index = Parse(index, code, TokenType::Semicolon, [](char c) { return false; }); continue; }
 
 				if (c == '"') { index = ParseString(index, code); continue; }
 

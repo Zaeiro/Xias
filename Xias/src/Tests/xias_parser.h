@@ -9,7 +9,7 @@ inline void test_lexer()
 {
 	Xias::Lexer lexer;
 
-	std::vector<Xias::Token> tokens = lexer.Analyse("myInt += 1;");
+	std::vector<Xias::Token> tokens = lexer.Analyse("myInt++;myInt--;");
 	lexer.PrintTokens(tokens);
 	
 	std::cout << "All tests done" << std::endl;
