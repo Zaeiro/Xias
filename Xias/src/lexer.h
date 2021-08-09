@@ -9,6 +9,8 @@ namespace Xias {
 	enum class TokenType : uint8_t
 	{
 		Identifier = 0U,
+		Keyword,
+		Operator,
 		String,
 		Number,
 
@@ -33,6 +35,16 @@ namespace Xias {
 
 	class Lexer
 	{
+		std::vector<std::string> keywords{
+			"public",
+			"private",
+			"class",
+			"struct",
+			"int",
+			"float",
+			"string"
+		};
+
 		std::vector<Token> tokens;
 
 		Token PushToken(TokenType type, std::string value)
@@ -83,18 +95,20 @@ namespace Xias {
 
 			switch (token.type)
 			{
-				case TokenType::Identifier: type = "Identifier"; break;
-				case TokenType::String: type = "String"; break;
-				case TokenType::Number: type = "Number"; break;
-				case TokenType::Colon: type = "Colon"; break;
-				case TokenType::Semicolon: type = "Semicolon"; break;
-				case TokenType::LCurly: type = "LCurly"; break;
-				case TokenType::RCurly: type = "RCurly"; break;
-				case TokenType::LParen: type = "LParen"; break;
-				case TokenType::RParen: type = "RParen"; break;
-				case TokenType::Assignment: type = "Assignment"; break;
+			case TokenType::Identifier: type = "Identifier"; break;
+			case TokenType::Keyword: type = "Keyword"; break;
+			case TokenType::Operator: type = "Operator"; break;
+			case TokenType::String: type = "String"; break;
+			case TokenType::Number: type = "Number"; break;
+			case TokenType::Colon: type = "Colon"; break;
+			case TokenType::Semicolon: type = "Semicolon"; break;
+			case TokenType::LCurly: type = "LCurly"; break;
+			case TokenType::RCurly: type = "RCurly"; break;
+			case TokenType::LParen: type = "LParen"; break;
+			case TokenType::RParen: type = "RParen"; break;
+			case TokenType::Assignment: type = "Assignment"; break;
 
-				default: type = "UNIDENTIFIED"; break;
+			default: type = "UNIDENTIFIED"; break;
 			}
 
 			std::cout << "Token<" << type << "> = \"" << token.value << "\"" << std::endl;
@@ -104,16 +118,21 @@ namespace Xias {
 		{
 			tokens.clear();
 
-			uint64_t index = 0;
+			int index = 0;
 			while (index < code.length())
 			{
 				auto c = code[index];
-				//std::cout << index << "," << c << std::endl;
 
 				if (isalpha(c)) { index = Parse(index, code, TokenType::Identifier, [=](char c) { return isalpha(c) || isdigit(c); }); continue; }
 				if (isdigit(c)) { index = Parse(index, code, TokenType::Number, [=](char c) { return isdigit(c); }); continue; }
+
 				// check if literal
+
 				if (c == '=') { index = Parse(index, code, TokenType::Assignment, [=](char c) { return false; }); continue; }
+				if (c == '+') { index = Parse(index, code, TokenType::Operator, [=](char c) { return false; }); continue; }
+				if (c == '-') { index = Parse(index, code, TokenType::Operator, [=](char c) { return false; }); continue; }
+				if (c == '*') { index = Parse(index, code, TokenType::Operator, [=](char c) { return false; }); continue; }
+				if (c == '/') { index = Parse(index, code, TokenType::Operator, [=](char c) { return false; }); continue; }
 
 				if (c == '{') { index = Parse(index, code, TokenType::LCurly, [=](char c) { return false; }); continue; }
 				if (c == '}') { index = Parse(index, code, TokenType::RCurly, [=](char c) { return false; }); continue; }
@@ -127,6 +146,12 @@ namespace Xias {
 
 				// Advance one char if nothing found
 				index++;
+			}
+
+			for (Token& token : tokens) {
+				if (std::find(keywords.begin(), keywords.end(), token.value) != keywords.end()) {
+					token.type = TokenType::Keyword;
+				}
 			}
 
 			return tokens;
