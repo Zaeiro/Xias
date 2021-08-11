@@ -47,7 +47,7 @@ namespace Xias {
 
 		std::vector<Token> tokens;
 
-		Token PushToken(TokenType type, std::string value)
+		Token PushToken(TokenType type, const std::string& value)
 		{
 			Token token;
 			token.type = type;
@@ -118,29 +118,69 @@ namespace Xias {
 		{
 			tokens.clear();
 
+			bool lineCommenting = false;
+			bool blockCommenting = false;
+
 			int index = 0;
 			while (index < code.length())
 			{
 				auto c = code[index];
+				// Check for comments
+				if (c == '/')
+				{
+					auto next = code[index + 1];
+					if (next == '*')
+					{
+						blockCommenting = true;
+						index += 2;
+						continue;
+					}
+					if (next == '/')
+					{
+						lineCommenting = true;
+						index += 2;
+						continue;
+					}
+				}
 
-				if (isalpha(c)) { index = Parse(index, code, TokenType::Identifier, [=](char c) { return isalpha(c) || isdigit(c); }); continue; }
-				if (isdigit(c)) { index = Parse(index, code, TokenType::Number, [=](char c) { return isdigit(c); }); continue; }
+				// Check for ends of comments
+				if (c == '\n')
+				{
+					lineCommenting = false;
+					index++;
+					continue;
+				}
+				if (c == '*' && code[index + 1] == '/')
+				{
+					blockCommenting = false;
+					index += 2;
+					continue;
+				}
+
+				if (lineCommenting || blockCommenting)
+				{
+					index++;
+					continue;
+				}
+
+				if (isalpha(c)) { index = Parse(index, code, TokenType::Identifier, [](char c) { return isalpha(c) || isdigit(c); }); continue; }
+				if (isdigit(c)) { index = Parse(index, code, TokenType::Number, [](char c) { return isdigit(c); }); continue; }
 
 				// check if literal
 
-				if (c == '=') { index = Parse(index, code, TokenType::Assignment, [=](char c) { return false; }); continue; }
-				if (c == '+') { index = Parse(index, code, TokenType::Operator, [=](char c) { return c == '+'; }); continue; }
-				if (c == '-') { index = Parse(index, code, TokenType::Operator, [=](char c) { return c == '-'; }); continue; }
-				if (c == '*') { index = Parse(index, code, TokenType::Operator, [=](char c) { return false; }); continue; }
-				if (c == '/') { index = Parse(index, code, TokenType::Operator, [=](char c) { return false; }); continue; }
-				if (c == '%') { index = Parse(index, code, TokenType::Operator, [=](char c) { return false; }); continue; }
-				if (c == '^') { index = Parse(index, code, TokenType::Operator, [=](char c) { return false; }); continue; }
+				if (c == '=') { index = Parse(index, code, TokenType::Assignment, [](char c) { return false; }); continue; }
+				if (c == '+') { index = Parse(index, code, TokenType::Operator, [](char c) { return c == '+'; }); continue; }
+				if (c == '-') { index = Parse(index, code, TokenType::Operator, [](char c) { return c == '-'; }); continue; }
+				if (c == '*') { index = Parse(index, code, TokenType::Operator, [](char c) { return false; }); continue; }
+				if (c == '/') { index = Parse(index, code, TokenType::Operator, [](char c) { return false; }); continue; }
+				if (c == '%') { index = Parse(index, code, TokenType::Operator, [](char c) { return false; }); continue; }
+				if (c == '^') { index = Parse(index, code, TokenType::Operator, [](char c) { return false; }); continue; }
 
-				if (c == '{') { index = Parse(index, code, TokenType::LCurly, [=](char c) { return false; }); continue; }
-				if (c == '}') { index = Parse(index, code, TokenType::RCurly, [=](char c) { return false; }); continue; }
+				if (c == '{') { index = Parse(index, code, TokenType::LCurly, [](char c) { return false; }); continue; }
+				if (c == '}') { index = Parse(index, code, TokenType::RCurly, [](char c) { return false; }); continue; }
 
-				if (c == '(') { index = Parse(index, code, TokenType::LParen, [=](char c) { return false; }); continue; }
-				if (c == ')') { index = Parse(index, code, TokenType::RParen, [=](char c) { return false; }); continue; }
+				if (c == '(') { index = Parse(index, code, TokenType::LParen, [](char c) { return false; }); continue; }
+				if (c == ')') { index = Parse(index, code, TokenType::RParen, [](char c) { return false; }); continue; }
 
 				if (c == ';') { index = Parse(index, code, TokenType::Semicolon, [](char c) { return false; }); continue; }
 
