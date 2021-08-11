@@ -6,15 +6,8 @@
 
 namespace Xias {
 
-	using x_byte = uint8_t;
-	using x_short = int16_t;
-	using x_int = int32_t;
 	using x_long = int64_t;
-	using x_sbyte = int8_t;
-	using x_ushort = uint16_t;
-	using x_uint = uint32_t;
 	using x_ulong = uint64_t;
-	using x_float = float;
 	using x_double = double;
 
 	struct _x_fieldID;
@@ -24,6 +17,13 @@ namespace Xias {
 	using x_methodID = _x_methodID*;
 
 	struct Function;
+
+	typedef union
+	{
+		x_double Double;
+		x_long Int;
+		x_ulong UInt;
+	} Value;
 
 	// Classes, structs, etc
 	struct Type

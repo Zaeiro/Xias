@@ -11,15 +11,15 @@ namespace Xias {
 
 	class Vm
 	{
-		std::vector<uint8_t> m_Stack;
+		std::vector<Value> m_Stack;
 		// The next open byte.
-		uint8_t* m_StackFront;
+		Value* m_StackFront;
 
 		Scope m_GlobalScope;
 	public:
 		Vm();
 
-		void Callfunction(std::vector<uint8_t>& function);
+		void CallFunction(std::vector<Instruction>& function, std::vector<Value>& constants);
 
 		template <typename TReturn, typename... TArgs>
 		TReturn CallStaticMethod(x_methodID method, TArgs... args)

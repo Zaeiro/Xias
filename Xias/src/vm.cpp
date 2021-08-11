@@ -62,143 +62,88 @@ switch ((InstructionVariants)*functionData)																												\
 functionData++;																																			\
 } static_assert(true, "")
 
-Xias::Vm::Vm()
-{
-	m_Stack.resize(32 * sizeof(int));
-	m_StackFront = m_Stack.data();
-}
+namespace Xias {
 
-void Xias::Vm::Callfunction(std::vector<uint8_t>& function)
-{
-	int acc = 0;
-	m_StackFront = m_Stack.data();
-	uint8_t* functionData = function.data();
-	uint8_t* functionEnd = function.empty() ? 0 : (&(*function.begin()) + function.size());
-	while (functionData != functionEnd)
+	Vm::Vm()
 	{
+		m_Stack.resize(32 * sizeof(int));
+		m_StackFront = m_Stack.data();
+	}
+
+	void Vm::CallFunction(std::vector<Instruction>& function, std::vector<Value>& constants)
+	{
+		//m_StackFront = m_Stack.data();
+		Value* stackFront = m_Stack.data();
+		Instruction* functionData = function.data();
+		Instruction* functionEnd = &(*function.begin()) + function.size();
+		if (functionData == functionEnd)
+			return;
+
+		while (functionData != functionEnd)
+		{
 #ifdef X_DEBUG
-		if (functionData >= functionEnd)
-		{
-			std::cout << "overpassed function end!\n";
-		}
+			if (functionData >= functionEnd)
+			{
+				std::cout << "overpassed function end!\n";
+			}
 #endif
-		switch ((Instructions)*functionData)
-		{
-			case Instructions::byte_arithmetic: { functionData++; ARITHMETIC(x_byte); break; }
-			case Instructions::byte_s_arithmetic: { functionData++; STACK_ARITHMETIC(x_byte); break; }
-			case Instructions::byte_casts: { functionData++; CASTS(x_byte); break; }
-			case Instructions::short_arithmetic: { functionData++; ARITHMETIC(x_short); break; }
-			case Instructions::short_s_arithmetic: { functionData++; STACK_ARITHMETIC(x_short); break; }
-			case Instructions::short_casts: { functionData++; CASTS(x_short); break; }
-			case Instructions::int_arithmetic: { functionData++; ARITHMETIC(x_int); break; }
-			case Instructions::int_s_arithmetic: { functionData++; STACK_ARITHMETIC(x_int); break; }
-			case Instructions::int_casts: { functionData++; CASTS(x_int); break; }
-			case Instructions::long_arithmetic: { functionData++; ARITHMETIC(x_long); break; }
-			case Instructions::long_s_arithmetic: { functionData++; STACK_ARITHMETIC(x_long); break; }
-			case Instructions::long_casts: { functionData++; CASTS(x_long); break; }
-			case Instructions::sbyte_arithmetic: { functionData++; ARITHMETIC(x_sbyte); break; }
-			case Instructions::sbyte_s_arithmetic: { functionData++; STACK_ARITHMETIC(x_sbyte); break; }
-			case Instructions::sbyte_casts: { functionData++; CASTS(x_sbyte); break; }
-			case Instructions::ushort_arithmetic: { functionData++; ARITHMETIC(x_ushort); break; }
-			case Instructions::ushort_s_arithmetic: { functionData++; STACK_ARITHMETIC(x_ushort); break; }
-			case Instructions::ushort_casts: { functionData++; CASTS(x_ushort); break; }
-			case Instructions::uint_arithmetic: { functionData++; ARITHMETIC(x_uint); break; }
-			case Instructions::uint_s_arithmetic: { functionData++; STACK_ARITHMETIC(x_uint); break; }
-			case Instructions::uint_casts: { functionData++; CASTS(x_uint); break; }
-			case Instructions::ulong_arithmetic: { functionData++; ARITHMETIC(x_ulong); break; }
-			case Instructions::ulong_s_arithmetic: { functionData++; STACK_ARITHMETIC(x_ulong); break; }
-			case Instructions::ulong_casts: { functionData++; CASTS(x_ulong); break; }
-			case Instructions::float_arithmetic:
+			switch (*functionData)
 			{
-				functionData++;
-				using thisType = x_float;
-				thisType* stackType = (thisType*)(m_StackFront - sizeof(thisType));
-				thisType* functionType = (thisType*)(functionData + 1);
-				switch ((InstructionVariants)*functionData)
-				{
-					case InstructionVariants::_inc: (*stackType)++; break;
-					case InstructionVariants::_dec: (*stackType)--; break;
-					case InstructionVariants::_add: *stackType += *functionType; break;
-					case InstructionVariants::_sub: *stackType -= *functionType; break;
-					case InstructionVariants::_mul: *stackType *= *functionType; break;
-					case InstructionVariants::_div:	*stackType /= *functionType; break;
-					case InstructionVariants::_mod:	*stackType = std::fmodf(*stackType, *functionType); break;
-					case InstructionVariants::_pow: *stackType = (thisType)std::pow(*stackType, *functionType); break;
-					default: Error("Unknown arithmetic operator!"); break;
-				}
-				functionData++;
-				m_StackFront -= sizeof(thisType);
+			case Instruction::int_inc: { (stackFront - sizeof(Value))->Int++; break; }
+			case Instruction::int_dec: { (stackFront - sizeof(Value))->Int--; break; }
+			case Instruction::int_add: { (stackFront - sizeof(Value) * 2)->Int += (stackFront - sizeof(Value))->Int; break; }
+			case Instruction::int_sub: { (stackFront - sizeof(Value) * 2)->Int -= (stackFront - sizeof(Value))->Int; break; }
+			case Instruction::int_mul: { (stackFront - sizeof(Value) * 2)->Int *= (stackFront - sizeof(Value))->Int; break; }
+			case Instruction::int_div: { (stackFront - sizeof(Value) * 2)->Int /= (stackFront - sizeof(Value))->Int; break; }
+			case Instruction::int_mod: { (stackFront - sizeof(Value) * 2)->Int %= (stackFront - sizeof(Value))->Int; break; }
+			case Instruction::int_pow:
+			{
+				Value* first = (stackFront - sizeof(Value) * 2);
+				Value* second = (stackFront - sizeof(Value));
+				first->Int = (x_long)std::pow(first->Int, second->Int);
 				break;
 			}
-			case Instructions::float_s_arithmetic:
+			case Instruction::uint_inc: { (stackFront - sizeof(Value))->UInt++; break; }
+			case Instruction::uint_dec: { (stackFront - sizeof(Value))->UInt--; break; }
+			case Instruction::uint_add: { (stackFront - sizeof(Value) * 2)->UInt += (stackFront - sizeof(Value))->UInt; break; }
+			case Instruction::uint_sub: { (stackFront - sizeof(Value) * 2)->UInt -= (stackFront - sizeof(Value))->UInt; break; }
+			case Instruction::uint_mul: { (stackFront - sizeof(Value) * 2)->UInt *= (stackFront - sizeof(Value))->UInt; break; }
+			case Instruction::uint_div: { (stackFront - sizeof(Value) * 2)->UInt /= (stackFront - sizeof(Value))->UInt; break; }
+			case Instruction::uint_mod: { (stackFront - sizeof(Value) * 2)->UInt %= (stackFront - sizeof(Value))->UInt; break; }
+			case Instruction::uint_pow:
 			{
-				functionData++;
-				using thisType = x_float;
-				thisType* stackType = (thisType*)(m_StackFront - sizeof(thisType) * 2);
-				thisType* functionType = (thisType*)(m_StackFront - sizeof(thisType));
-				switch ((InstructionVariants)*functionData)
-				{
-					case InstructionVariants::_inc: (*stackType)++; break;
-					case InstructionVariants::_dec: (*stackType)--; break;
-					case InstructionVariants::_add: *stackType += *functionType; break;
-					case InstructionVariants::_sub: *stackType -= *functionType; break;
-					case InstructionVariants::_mul: *stackType *= *functionType; break;
-					case InstructionVariants::_div:	*stackType /= *functionType; break;
-					case InstructionVariants::_mod:	*stackType = std::fmodf(*stackType, *functionType); break;
-					case InstructionVariants::_pow: *stackType = (thisType)std::pow(*stackType, *functionType); break;
-					default: Error("Unknown stack arithmetic operator!"); break;
-				}
-				functionData++;
-				m_StackFront -= sizeof(thisType);
+				Value* first = (stackFront - sizeof(Value) * 2);
+				Value* second = (stackFront - sizeof(Value));
+				first->UInt = (x_ulong)std::pow(first->UInt, second->UInt);
 				break;
 			}
-			case Instructions::float_casts: { functionData++; CASTS(x_float); break; }
-			case Instructions::double_arithmetic:
+			case Instruction::double_inc: { (stackFront - sizeof(Value))->Double++; break; }
+			case Instruction::double_dec: { (stackFront - sizeof(Value))->Double--; break; }
+			case Instruction::double_add: { (stackFront - sizeof(Value) * 2)->Double += (stackFront - sizeof(Value))->Double; break; }
+			case Instruction::double_sub: { (stackFront - sizeof(Value) * 2)->Double -= (stackFront - sizeof(Value))->Double; break; }
+			case Instruction::double_mul: { (stackFront - sizeof(Value) * 2)->Double *= (stackFront - sizeof(Value))->Double; break; }
+			case Instruction::double_div: { (stackFront - sizeof(Value) * 2)->Double /= (stackFront - sizeof(Value))->Double; break; }
+			case Instruction::double_mod:
 			{
-				functionData++;
-				using thisType = x_double;
-				thisType* stackType = (thisType*)(m_StackFront - sizeof(thisType));
-				thisType* functionType = (thisType*)(functionData + 1);
-				switch ((InstructionVariants)*functionData)
-				{
-					case InstructionVariants::_inc: (*stackType)++; break;
-					case InstructionVariants::_dec: (*stackType)--; break;
-					case InstructionVariants::_add: *stackType += *functionType; break;
-					case InstructionVariants::_sub: *stackType -= *functionType; break;
-					case InstructionVariants::_mul: *stackType *= *functionType; break;
-					case InstructionVariants::_div:	*stackType /= *functionType; break;
-					case InstructionVariants::_mod:	*stackType = std::fmod(*stackType, *functionType); break;
-					case InstructionVariants::_pow: *stackType = (thisType)std::pow(*stackType, *functionType); break;
-					default: Error("Unknown arithmetic operator!"); break;
-				}
-				functionData++;
-				m_StackFront -= sizeof(thisType);
+				Value* first = (stackFront - sizeof(Value) * 2);
+				Value* second = (stackFront - sizeof(Value));
+				first->Double = (x_double)std::fmod(first->Double, second->Double);
 				break;
 			}
-			case Instructions::double_s_arithmetic:
+			case Instruction::double_pow:
 			{
-				functionData++;
-				using thisType = x_double;
-				thisType* stackType = (thisType*)(m_StackFront - sizeof(thisType) * 2);
-				thisType* functionType = (thisType*)(m_StackFront - sizeof(thisType));
-				switch ((InstructionVariants)*functionData)
-				{
-					case InstructionVariants::_inc: (*stackType)++; break;
-					case InstructionVariants::_dec: (*stackType)--; break;
-					case InstructionVariants::_add: *stackType += *functionType; break;
-					case InstructionVariants::_sub: *stackType -= *functionType; break;
-					case InstructionVariants::_mul: *stackType *= *functionType; break;
-					case InstructionVariants::_div:	*stackType /= *functionType; break;
-					case InstructionVariants::_mod:	*stackType = std::fmod(*stackType, *functionType); break;
-					case InstructionVariants::_pow: *stackType = (thisType)std::pow(*stackType, *functionType); break;
-					default: Error("Unknown stack arithmetic operator!"); break;
-				}
-				functionData++;
-				m_StackFront -= sizeof(thisType);
+				Value* first = (stackFront - sizeof(Value) * 2);
+				Value* second = (stackFront - sizeof(Value));
+				first->Double = (x_double)std::pow(first->Double, second->Double);
 				break;
 			}
-			case Instructions::double_casts: { functionData++; CASTS(x_double); break; }
-			case Instructions::push:
+			case Instruction::int_from_uint: { (stackFront - sizeof(Value))->Int = (stackFront - sizeof(Value))->UInt; }
+			case Instruction::int_from_double: { (stackFront - sizeof(Value))->Int = (stackFront - sizeof(Value))->Double; }
+			case Instruction::uint_from_int: { (stackFront - sizeof(Value))->UInt = (stackFront - sizeof(Value))->Int; }
+			case Instruction::uint_from_double: { (stackFront - sizeof(Value))->UInt = (stackFront - sizeof(Value))->Double; }
+			case Instruction::double_from_int: { (stackFront - sizeof(Value))->Double = (stackFront - sizeof(Value))->Int; }
+			case Instruction::double_from_uint: { (stackFront - sizeof(Value))->Double = (stackFront - sizeof(Value))->UInt; }
+			case Instruction::push:
 			{
 				functionData++;
 				uint32_t size = *(uint32_t*)functionData;
@@ -207,27 +152,30 @@ void Xias::Vm::Callfunction(std::vector<uint8_t>& function)
 				functionData += size + sizeof(uint32_t);
 				break;
 			}
-			case Instructions::push_1: { functionData++; std::memcpy(m_StackFront, functionData, 1); m_StackFront++; functionData++; break; }
-			case Instructions::push_2: { functionData++; std::memcpy(m_StackFront, functionData, 2); m_StackFront += 2; functionData += 2; break; }
-			case Instructions::push_4: { functionData++; std::memcpy(m_StackFront, functionData, 4); m_StackFront += 4; functionData += 4; break; }
-			case Instructions::push_8: { functionData++; std::memcpy(m_StackFront, functionData, 8); m_StackFront += 8; functionData += 8; break; }
-			case Instructions::pop:
+			case Instruction::push_1: { functionData++; std::memcpy(m_StackFront, functionData, 1); m_StackFront++; functionData++; break; }
+			case Instruction::push_2: { functionData++; std::memcpy(m_StackFront, functionData, 2); m_StackFront += 2; functionData += 2; break; }
+			case Instruction::push_4: { functionData++; std::memcpy(m_StackFront, functionData, 4); m_StackFront += 4; functionData += 4; break; }
+			case Instruction::push_8: { functionData++; std::memcpy(m_StackFront, functionData, 8); m_StackFront += 8; functionData += 8; break; }
+			case Instruction::pop:
 			{
 				functionData++;
 				m_StackFront -= *(uint32_t*)functionData;
 				functionData += sizeof(uint32_t);
 				break;
 			}
-			case Instructions::pop_1: { functionData++; m_StackFront--; break; }
-			case Instructions::pop_2: { functionData++; m_StackFront -= 2; break; }
-			case Instructions::pop_4: { functionData++; m_StackFront -= 4; break; }
-			case Instructions::pop_8: { functionData++; m_StackFront -= 8; break; }
+			case Instruction::pop_1: { functionData++; m_StackFront--; break; }
+			case Instruction::pop_2: { functionData++; m_StackFront -= 2; break; }
+			case Instruction::pop_4: { functionData++; m_StackFront -= 4; break; }
+			case Instruction::pop_8: { functionData++; m_StackFront -= 8; break; }
 			default: Error("Unknown instruction!"); break;
+			}
+			functionData++;
 		}
 	}
-}
 
-void Xias::Vm::Error(const char* msg)
-{
-	std::cerr << msg;
+	void Vm::Error(const char* msg)
+	{
+		std::cerr << msg;
+	}
+
 }
