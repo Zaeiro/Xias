@@ -9,9 +9,6 @@ inline void test_lexer()
 {
 	Xias::Lexer lexer;
 
-	std::vector<Xias::Token> tokens = lexer.Analyse("myInt++;myInt--;\n// comment test\nmyInt += 1;/*myInt = 1;\nmyInt += 2;*/myInt--;");
+	std::vector<Xias::Token> tokens = lexer.Analyse("myInt++; // this line increments the int, if you didnt know\nmyInt = 3 / 4;\n");
 	lexer.PrintTokens(tokens);
-	
-	std::cout << "All tests done" << std::endl;
-	std::cin.get();
 }

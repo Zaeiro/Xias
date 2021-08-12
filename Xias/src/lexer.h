@@ -24,6 +24,7 @@ namespace Xias {
 		RParen, // Right parentheses
 
 		Assignment, // =
+		Comment,
 
 	};
 
@@ -31,6 +32,8 @@ namespace Xias {
 	{
 		TokenType type;
 		std::string value;
+		int start;
+		int offset;
 	};
 
 	class Lexer
@@ -47,11 +50,13 @@ namespace Xias {
 
 		std::vector<Token> tokens;
 
-		Token PushToken(TokenType type, const std::string& value)
+		Token PushToken(TokenType type, const std::string& value, int start, int offset)
 		{
 			Token token;
 			token.type = type;
 			token.value = value;
+			token.start = start;
+			token.offset = offset;
 			tokens.push_back(token);
 			return token;
 		}
@@ -67,7 +72,22 @@ namespace Xias {
 
 			std::string value = code.substr(start, index - start);
 			//std::cout << "Parse(" << start << "," << index << ",\"" << value << "\")" << std::endl;
-			PushToken(type, value);
+			PushToken(type, value, start, index - start);
+			return index;
+		}
+
+		// TODO: add block comments
+		int ParseComment(int index, const std::string& code) {
+			int start = index;
+
+			char c;
+			do {
+				index++;
+				c = code[index];
+			} while (c != '\n');
+
+			std::string value = code.substr(start + 2, index - start - 2);
+			PushToken(TokenType::Comment, value, start, index - start);
 			return index;
 		}
 
@@ -79,7 +99,7 @@ namespace Xias {
 			} while (code[index] != '"');
 
 			std::string value = code.substr(start + 1, index - start - 1);
-			PushToken(TokenType::String, value);
+			PushToken(TokenType::String, value, start, index - start);
 			return index + 1;
 		}
 
@@ -107,89 +127,54 @@ namespace Xias {
 			case TokenType::LParen: type = "LParen"; break;
 			case TokenType::RParen: type = "RParen"; break;
 			case TokenType::Assignment: type = "Assignment"; break;
+			case TokenType::Comment: type = "Comment"; break;
 
 			default: type = "UNIDENTIFIED"; break;
 			}
 
-			std::cout << "Token<" << type << "> = \"" << token.value << "\"" << std::endl;
+			std::cout << "Token<" << type << ">(" << token.start << "," << token.offset + token.start << ")" << " = \"" << token.value << "\"" << std::endl;
 		}
 
 		std::vector<Token> Analyse(const std::string& code)
 		{
 			tokens.clear();
 
-			bool lineCommenting = false;
-			bool blockCommenting = false;
-
 			int index = 0;
 			while (index < code.length())
 			{
-				auto c = code[index];
-				// Check for comments
-				if (c == '/')
-				{
-					auto next = code[index + 1];
-					if (next == '*')
-					{
-						blockCommenting = true;
-						index += 2;
-						continue;
-					}
-					if (next == '/')
-					{
-						lineCommenting = true;
-						index += 2;
-						continue;
-					}
-				}
+				char current = code[index];
+				char next = code[index + 1];
+				
+				if (current == '/' && next == '/') { index = ParseComment(index, code); continue; }
 
-				// Check for ends of comments
-				if (c == '\n')
-				{
-					lineCommenting = false;
-					index++;
-					continue;
-				}
-				if (c == '*' && code[index + 1] == '/')
-				{
-					blockCommenting = false;
-					index += 2;
-					continue;
-				}
-
-				if (lineCommenting || blockCommenting)
-				{
-					index++;
-					continue;
-				}
-
-				if (isalpha(c)) { index = Parse(index, code, TokenType::Identifier, [](char c) { return isalpha(c) || isdigit(c); }); continue; }
-				if (isdigit(c)) { index = Parse(index, code, TokenType::Number, [](char c) { return isdigit(c); }); continue; }
+				if (isalpha(current)) { index = Parse(index, code, TokenType::Identifier, [](char c) { return isalpha(c) || isdigit(c); }); continue; }
+				if (isdigit(current)) { index = Parse(index, code, TokenType::Number, [](char c) { return isdigit(c); }); continue; }
 
 				// check if literal
 
-				if (c == '=') { index = Parse(index, code, TokenType::Assignment, [](char c) { return false; }); continue; }
-				if (c == '+') { index = Parse(index, code, TokenType::Operator, [](char c) { return c == '+'; }); continue; }
-				if (c == '-') { index = Parse(index, code, TokenType::Operator, [](char c) { return c == '-'; }); continue; }
-				if (c == '*') { index = Parse(index, code, TokenType::Operator, [](char c) { return false; }); continue; }
-				if (c == '/') { index = Parse(index, code, TokenType::Operator, [](char c) { return false; }); continue; }
-				if (c == '%') { index = Parse(index, code, TokenType::Operator, [](char c) { return false; }); continue; }
-				if (c == '^') { index = Parse(index, code, TokenType::Operator, [](char c) { return false; }); continue; }
+				if (current == '=') { index = Parse(index, code, TokenType::Assignment, [](char c) { return false; }); continue; }
+				if (current == '+') { index = Parse(index, code, TokenType::Operator, [](char c) { return c == '+'; }); continue; }
+				if (current == '-') { index = Parse(index, code, TokenType::Operator, [](char c) { return c == '-'; }); continue; }
+				if (current == '*') { index = Parse(index, code, TokenType::Operator, [](char c) { return false; }); continue; }
+				if (current == '/') { index = Parse(index, code, TokenType::Operator, [](char c) { return false; }); continue; }
+				if (current == '%') { index = Parse(index, code, TokenType::Operator, [](char c) { return false; }); continue; }
+				if (current == '^') { index = Parse(index, code, TokenType::Operator, [](char c) { return false; }); continue; }
 
-				if (c == '{') { index = Parse(index, code, TokenType::LCurly, [](char c) { return false; }); continue; }
-				if (c == '}') { index = Parse(index, code, TokenType::RCurly, [](char c) { return false; }); continue; }
+				if (current == '{') { index = Parse(index, code, TokenType::LCurly, [](char c) { return false; }); continue; }
+				if (current == '}') { index = Parse(index, code, TokenType::RCurly, [](char c) { return false; }); continue; }
 
-				if (c == '(') { index = Parse(index, code, TokenType::LParen, [](char c) { return false; }); continue; }
-				if (c == ')') { index = Parse(index, code, TokenType::RParen, [](char c) { return false; }); continue; }
+				if (current == '(') { index = Parse(index, code, TokenType::LParen, [](char c) { return false; }); continue; }
+				if (current == ')') { index = Parse(index, code, TokenType::RParen, [](char c) { return false; }); continue; }
 
-				if (c == ';') { index = Parse(index, code, TokenType::Semicolon, [](char c) { return false; }); continue; }
+				if (current == ';') { index = Parse(index, code, TokenType::Semicolon, [](char c) { return false; }); continue; }
 
-				if (c == '"') { index = ParseString(index, code); continue; }
+				if (current == '"') { index = ParseString(index, code); continue; }
 
 				// Advance one char if nothing found
 				index++;
 			}
 
+			// Replace identifiers with keywords if their value matches any defined keywords
 			for (Token& token : tokens) {
 				if (std::find(keywords.begin(), keywords.end(), token.value) != keywords.end()) {
 					token.type = TokenType::Keyword;
