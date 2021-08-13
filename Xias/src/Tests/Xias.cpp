@@ -12,7 +12,7 @@
 
 int main()
 {
-	//test_vm();
+	test_vm();
 	test_lexer();
 
 	std::cout << "All tests done" << std::endl;

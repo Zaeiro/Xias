@@ -8,32 +8,40 @@
 
 inline void test_vm()
 {
-	std::vector<uint8_t> data;
-	data.resize(11);
-	uint8_t* pdata = data.data();
-	*pdata = (uint8_t)Xias::Instruction::push_1;
-	pdata++;
-	*((Xias::x_byte*)pdata) = (Xias::x_byte)34;
-	pdata += sizeof(Xias::x_byte);
-
-	*pdata = (uint8_t)Xias::Instruction::byte_casts;
-	pdata++;
-	*pdata = (uint8_t)Xias::InstructionVariants::_to_float;
-	pdata++;
-
-	*pdata = (uint8_t)Xias::Instruction::push_4;
-	pdata++;
-	*((float*)pdata) = 10.0f;
-	pdata += sizeof(float);
-
-	*pdata = (uint8_t)Xias::Instruction::float_s_arithmetic;
-	pdata++;
-	*pdata = (uint8_t)Xias::InstructionVariants::_div;
-	pdata++;
-
+	std::vector<Xias::Instruction> data;
+    data.emplace_back(Xias::Instruction::push_value);
+    data.emplace_back(Xias::Instruction::double_from_int);
+    data.emplace_back(Xias::Instruction::push_value);
+    data.emplace_back(Xias::Instruction::double_add);
+    data.emplace_back(Xias::Instruction::print_double);
+    data.emplace_back(Xias::Instruction::push_value);
+    data.emplace_back(Xias::Instruction::double_add);
+    data.emplace_back(Xias::Instruction::print_double);
+    data.emplace_back(Xias::Instruction::push_value);
+    data.emplace_back(Xias::Instruction::print_string);
+    data.emplace_back(Xias::Instruction::push_value);
+    data.emplace_back(Xias::Instruction::print_string);
+    data.emplace_back(Xias::Instruction::string_add);
+    data.emplace_back(Xias::Instruction::print_string);
+    data.emplace_back(Xias::Instruction::push_value);
+    data.emplace_back(Xias::Instruction::print_string);
+    data.emplace_back(Xias::Instruction::string_add);
+    data.emplace_back(Xias::Instruction::print_string);
+    
+    data.resize(18);
+    std::vector<Xias::Value> constants;
+    Xias::Value xint;
+    xint.Int = 3;
+    constants.emplace_back(xint);
+    constants.emplace_back(Xias::Value{4.3746});
+    constants.emplace_back(Xias::Value{2.1});
+    constants.emplace_back(OBJ_VAL(Xias::copyString("s", 1)));
+    constants.emplace_back(OBJ_VAL(Xias::copyString("tr", 2)));
+    constants.emplace_back(OBJ_VAL(Xias::copyString("ing", 3)));
+    
 	Xias::Vm xvm;
 
-	xvm.Callfunction(data);
+	xvm.CallFunction(data, constants);
 
 	std::cin.get();
 }

@@ -1,66 +1,19 @@
 #include "vm.h"
 
-#include "instructions.h"
+#include "types.h"
+#include "object.h"
+#include "memory.h"
 
-#define ARITHMETIC(thisType)                                                                           \
-{																									   \
-thisType* stackType = (thisType*)(m_StackFront - sizeof(thisType));									   \
-thisType* functionType = (thisType*)(functionData + 1);												   \
-switch ((InstructionVariants)*functionData)															   \
-{																									   \
-	case InstructionVariants::_inc: (*stackType)++; break;											   \
-	case InstructionVariants::_dec: (*stackType)--; break;											   \
-	case InstructionVariants::_add: *stackType += *functionType; break;								   \
-	case InstructionVariants::_sub: *stackType -= *functionType; break;								   \
-	case InstructionVariants::_mul: *stackType *= *functionType; break;								   \
-	case InstructionVariants::_div:	*stackType /= *functionType; break;								   \
-	case InstructionVariants::_mod:	*stackType %= *functionType; break;								   \
-	case InstructionVariants::_pow: *stackType = (thisType)std::pow(*stackType, *functionType); break; \
-	default: Error("Unknown arithmetic operator!"); break;											   \
-}																									   \
-functionData++;																						   \
-functionData += sizeof(thisType);																	   \
-} static_assert(true, "")
+#define AS_DOUBLE(value) (value->Double)
+#define AS_FLOAT(value) (value->Float)
+#define AS_INT(value) (value->Int)
+#define AS_UINT(value) (value->UInt)
+#define AS_BOOL(value) (value->Bool)
+#define AS_OBJ(value) (value->Object)
 
-#define STACK_ARITHMETIC(thisType)                                                                     \
-{																									   \
-thisType* stackType = (thisType*)(m_StackFront - sizeof(thisType) * 2);								   \
-thisType* functionType = (thisType*)(m_StackFront - sizeof(thisType));								   \
-switch ((InstructionVariants)*functionData)															   \
-{																									   \
-	case InstructionVariants::_inc: (*stackType)++; break;											   \
-	case InstructionVariants::_dec: (*stackType)--; break;											   \
-	case InstructionVariants::_add: *stackType += *functionType; break;								   \
-	case InstructionVariants::_sub: *stackType -= *functionType; break;								   \
-	case InstructionVariants::_mul: *stackType *= *functionType; break;								   \
-	case InstructionVariants::_div:	*stackType /= *functionType; break;								   \
-	case InstructionVariants::_mod:	*stackType %= *functionType; break;								   \
-	case InstructionVariants::_pow: *stackType = (thisType)std::pow(*stackType, *functionType); break; \
-	default: Error("Unknown stack arithmetic operator!"); break;									   \
-}																									   \
-functionData++;																						   \
-m_StackFront -= sizeof(thisType);																	   \
-} static_assert(true, "")
-
-#define CASTS(thisType)																																	\
-{																																						\
-thisType* stackType = (thisType*)(m_StackFront - sizeof(thisType));																						\
-switch ((InstructionVariants)*functionData)																												\
-{																																						\
-	case InstructionVariants::_to_byte   : *(uint8_t*)  stackType = (uint8_t) *stackType; m_StackFront += (sizeof(uint8_t)  - sizeof(thisType)); break; \
-	case InstructionVariants::_to_short  : *(int16_t*)  stackType = (int16_t) *stackType; m_StackFront += (sizeof(int16_t)  - sizeof(thisType)); break; \
-	case InstructionVariants::_to_int    : *(int32_t*)  stackType = (int32_t) *stackType; m_StackFront += (sizeof(int32_t)  - sizeof(thisType)); break; \
-	case InstructionVariants::_to_long   : *(int64_t*)  stackType = (int64_t) *stackType; m_StackFront += (sizeof(int64_t)  - sizeof(thisType)); break; \
-	case InstructionVariants::_to_sbyte  : *(int8_t*)   stackType = (int8_t)  *stackType; m_StackFront += (sizeof(int8_t)   - sizeof(thisType)); break; \
-	case InstructionVariants::_to_ushort : *(uint16_t*) stackType = (uint16_t)*stackType; m_StackFront += (sizeof(uint16_t) - sizeof(thisType)); break; \
-	case InstructionVariants::_to_uint   : *(uint32_t*) stackType = (uint32_t)*stackType; m_StackFront += (sizeof(uint32_t) - sizeof(thisType)); break; \
-	case InstructionVariants::_to_ulong  : *(uint64_t*) stackType = (uint64_t)*stackType; m_StackFront += (sizeof(uint64_t) - sizeof(thisType)); break; \
-	case InstructionVariants::_to_float  : *(float*)    stackType = (float)   *stackType; m_StackFront += (sizeof(float)    - sizeof(thisType)); break; \
-	case InstructionVariants::_to_double : *(double*)   stackType = (double)  *stackType; m_StackFront += (sizeof(double)   - sizeof(thisType)); break; \
-	default: Error("Unknown cast!"); break;																												\
-}																																						\
-functionData++;																																			\
-} static_assert(true, "")
+#define LEFT_OPERAND(type) ((stackFront - 2)->type)
+#define RIGHT_OPERAND(type) ((stackFront - 1)->type)
+#define UNARY_OPERAND(type) ((stackFront - 1)->type)
 
 namespace Xias {
 
@@ -79,6 +32,8 @@ namespace Xias {
 		if (functionData == functionEnd)
 			return;
 
+        Value* constantsFront = constants.data();
+        
 		while (functionData != functionEnd)
 		{
 #ifdef X_DEBUG
@@ -89,86 +44,187 @@ namespace Xias {
 #endif
 			switch (*functionData)
 			{
-			case Instruction::int_inc: { (stackFront - sizeof(Value))->Int++; break; }
-			case Instruction::int_dec: { (stackFront - sizeof(Value))->Int--; break; }
-			case Instruction::int_add: { (stackFront - sizeof(Value) * 2)->Int += (stackFront - sizeof(Value))->Int; break; }
-			case Instruction::int_sub: { (stackFront - sizeof(Value) * 2)->Int -= (stackFront - sizeof(Value))->Int; break; }
-			case Instruction::int_mul: { (stackFront - sizeof(Value) * 2)->Int *= (stackFront - sizeof(Value))->Int; break; }
-			case Instruction::int_div: { (stackFront - sizeof(Value) * 2)->Int /= (stackFront - sizeof(Value))->Int; break; }
-			case Instruction::int_mod: { (stackFront - sizeof(Value) * 2)->Int %= (stackFront - sizeof(Value))->Int; break; }
-			case Instruction::int_pow:
-			{
-				Value* first = (stackFront - sizeof(Value) * 2);
-				Value* second = (stackFront - sizeof(Value));
-				first->Int = (x_long)std::pow(first->Int, second->Int);
-				break;
-			}
-			case Instruction::uint_inc: { (stackFront - sizeof(Value))->UInt++; break; }
-			case Instruction::uint_dec: { (stackFront - sizeof(Value))->UInt--; break; }
-			case Instruction::uint_add: { (stackFront - sizeof(Value) * 2)->UInt += (stackFront - sizeof(Value))->UInt; break; }
-			case Instruction::uint_sub: { (stackFront - sizeof(Value) * 2)->UInt -= (stackFront - sizeof(Value))->UInt; break; }
-			case Instruction::uint_mul: { (stackFront - sizeof(Value) * 2)->UInt *= (stackFront - sizeof(Value))->UInt; break; }
-			case Instruction::uint_div: { (stackFront - sizeof(Value) * 2)->UInt /= (stackFront - sizeof(Value))->UInt; break; }
-			case Instruction::uint_mod: { (stackFront - sizeof(Value) * 2)->UInt %= (stackFront - sizeof(Value))->UInt; break; }
-			case Instruction::uint_pow:
-			{
-				Value* first = (stackFront - sizeof(Value) * 2);
-				Value* second = (stackFront - sizeof(Value));
-				first->UInt = (x_ulong)std::pow(first->UInt, second->UInt);
-				break;
-			}
-			case Instruction::double_inc: { (stackFront - sizeof(Value))->Double++; break; }
-			case Instruction::double_dec: { (stackFront - sizeof(Value))->Double--; break; }
-			case Instruction::double_add: { (stackFront - sizeof(Value) * 2)->Double += (stackFront - sizeof(Value))->Double; break; }
-			case Instruction::double_sub: { (stackFront - sizeof(Value) * 2)->Double -= (stackFront - sizeof(Value))->Double; break; }
-			case Instruction::double_mul: { (stackFront - sizeof(Value) * 2)->Double *= (stackFront - sizeof(Value))->Double; break; }
-			case Instruction::double_div: { (stackFront - sizeof(Value) * 2)->Double /= (stackFront - sizeof(Value))->Double; break; }
-			case Instruction::double_mod:
-			{
-				Value* first = (stackFront - sizeof(Value) * 2);
-				Value* second = (stackFront - sizeof(Value));
-				first->Double = (x_double)std::fmod(first->Double, second->Double);
-				break;
-			}
-			case Instruction::double_pow:
-			{
-				Value* first = (stackFront - sizeof(Value) * 2);
-				Value* second = (stackFront - sizeof(Value));
-				first->Double = (x_double)std::pow(first->Double, second->Double);
-				break;
-			}
-			case Instruction::int_from_uint: { (stackFront - sizeof(Value))->Int = (stackFront - sizeof(Value))->UInt; }
-			case Instruction::int_from_double: { (stackFront - sizeof(Value))->Int = (stackFront - sizeof(Value))->Double; }
-			case Instruction::uint_from_int: { (stackFront - sizeof(Value))->UInt = (stackFront - sizeof(Value))->Int; }
-			case Instruction::uint_from_double: { (stackFront - sizeof(Value))->UInt = (stackFront - sizeof(Value))->Double; }
-			case Instruction::double_from_int: { (stackFront - sizeof(Value))->Double = (stackFront - sizeof(Value))->Int; }
-			case Instruction::double_from_uint: { (stackFront - sizeof(Value))->Double = (stackFront - sizeof(Value))->UInt; }
-			case Instruction::push:
-			{
-				functionData++;
-				uint32_t size = *(uint32_t*)functionData;
-				std::memcpy(m_StackFront, functionData + sizeof(uint32_t), size);
-				m_StackFront += size;
-				functionData += size + sizeof(uint32_t);
-				break;
-			}
-			case Instruction::push_1: { functionData++; std::memcpy(m_StackFront, functionData, 1); m_StackFront++; functionData++; break; }
-			case Instruction::push_2: { functionData++; std::memcpy(m_StackFront, functionData, 2); m_StackFront += 2; functionData += 2; break; }
-			case Instruction::push_4: { functionData++; std::memcpy(m_StackFront, functionData, 4); m_StackFront += 4; functionData += 4; break; }
-			case Instruction::push_8: { functionData++; std::memcpy(m_StackFront, functionData, 8); m_StackFront += 8; functionData += 8; break; }
-			case Instruction::pop:
-			{
-				functionData++;
-				m_StackFront -= *(uint32_t*)functionData;
-				functionData += sizeof(uint32_t);
-				break;
-			}
-			case Instruction::pop_1: { functionData++; m_StackFront--; break; }
-			case Instruction::pop_2: { functionData++; m_StackFront -= 2; break; }
-			case Instruction::pop_4: { functionData++; m_StackFront -= 4; break; }
-			case Instruction::pop_8: { functionData++; m_StackFront -= 8; break; }
-			default: Error("Unknown instruction!"); break;
-			}
+                // Arithmetic
+                case Instruction::int_inc: { UNARY_OPERAND(Int)++; break; }
+                case Instruction::int_dec: { UNARY_OPERAND(Int)--; break; }
+                case Instruction::int_add: { LEFT_OPERAND(Int) += RIGHT_OPERAND(Int); stackFront--; break; }
+                case Instruction::int_sub: { LEFT_OPERAND(Int) -= RIGHT_OPERAND(Int); stackFront--; break; }
+                case Instruction::int_mul: { LEFT_OPERAND(Int) *= RIGHT_OPERAND(Int); stackFront--; break; }
+                case Instruction::int_div: { LEFT_OPERAND(Int) /= RIGHT_OPERAND(Int); stackFront--; break; }
+                case Instruction::int_mod: { LEFT_OPERAND(Int) %= RIGHT_OPERAND(Int); stackFront--; break; }
+                case Instruction::int_pow:
+                {
+                    LEFT_OPERAND(Int) = (x_long)std::pow(LEFT_OPERAND(Int), RIGHT_OPERAND(Int));
+                    stackFront--;
+                    break;
+                }
+                case Instruction::uint_inc: { UNARY_OPERAND(UInt)++; break; }
+                case Instruction::uint_dec: { UNARY_OPERAND(UInt)--; break; }
+                case Instruction::uint_add: { LEFT_OPERAND(UInt) += RIGHT_OPERAND(UInt); stackFront--; break; }
+                case Instruction::uint_sub: { LEFT_OPERAND(UInt) -= RIGHT_OPERAND(UInt); stackFront--; break; }
+                case Instruction::uint_mul: { LEFT_OPERAND(UInt) *= RIGHT_OPERAND(UInt); stackFront--; break; }
+                case Instruction::uint_div: { LEFT_OPERAND(UInt) /= RIGHT_OPERAND(UInt); stackFront--; break; }
+                case Instruction::uint_mod: { LEFT_OPERAND(UInt) %= RIGHT_OPERAND(UInt); stackFront--; break; }
+                case Instruction::uint_pow:
+                {
+                    LEFT_OPERAND(UInt) = (x_ulong)std::pow(LEFT_OPERAND(UInt), RIGHT_OPERAND(UInt));
+                    stackFront--;
+                    break;
+                }
+                case Instruction::double_inc: { UNARY_OPERAND(Double)++; break; }
+                case Instruction::double_dec: { UNARY_OPERAND(Double)--; break; }
+                case Instruction::double_add: { LEFT_OPERAND(Double) += RIGHT_OPERAND(Double); stackFront--; break; }
+                case Instruction::double_sub: { LEFT_OPERAND(Double) -= RIGHT_OPERAND(Double); stackFront--; break; }
+                case Instruction::double_mul: { LEFT_OPERAND(Double) *= RIGHT_OPERAND(Double); stackFront--; break; }
+                case Instruction::double_div: { LEFT_OPERAND(Double) /= RIGHT_OPERAND(Double); stackFront--; break; }
+                case Instruction::double_mod:
+                {
+                    LEFT_OPERAND(Double) = (x_double)std::fmod(LEFT_OPERAND(Double), RIGHT_OPERAND(Double));
+                    stackFront--;
+                    break;
+                }
+                case Instruction::double_pow:
+                {
+                    LEFT_OPERAND(Double) = (x_double)std::pow(LEFT_OPERAND(Double), RIGHT_OPERAND(Double));
+                    stackFront--;
+                    break;
+                }
+                case Instruction::float_inc: { UNARY_OPERAND(Float)++; break; }
+                case Instruction::float_dec: { UNARY_OPERAND(Float)--; break; }
+                case Instruction::float_add: { LEFT_OPERAND(Float) += RIGHT_OPERAND(Float); stackFront--; break; }
+                case Instruction::float_sub: { LEFT_OPERAND(Float) -= RIGHT_OPERAND(Float); stackFront--; break; }
+                case Instruction::float_mul: { LEFT_OPERAND(Float) *= RIGHT_OPERAND(Float); stackFront--; break; }
+                case Instruction::float_div: { LEFT_OPERAND(Float) /= RIGHT_OPERAND(Float); stackFront--; break; }
+                case Instruction::float_mod:
+                {
+                    LEFT_OPERAND(Float) = (x_float)std::fmod(LEFT_OPERAND(Float), RIGHT_OPERAND(Float));
+                    stackFront--;
+                    break;
+                }
+                case Instruction::float_pow:
+                {
+                    LEFT_OPERAND(Float) = (x_float)std::powf(LEFT_OPERAND(Float), RIGHT_OPERAND(Float));
+                    stackFront--;
+                    break;
+                }
+                
+                // String operations
+                case Instruction::string_add:
+                {
+                    StringObject* left = ((StringObject*)LEFT_OPERAND(Object));
+                    StringObject* right = ((StringObject*)RIGHT_OPERAND(Object));
+                    x_ulong length = left->Size + right->Size;
+                    char* chars = ALLOCATE(char, length + 1);
+                    memcpy(chars, left->Chars, left->Size);
+                    memcpy(chars + left->Size, right->Chars, right->Size);
+                    chars[length] = '\0';
+                    delete[] left->Chars;
+                    delete left;
+                    delete[] right->Chars;
+                    delete right;
+                    LEFT_OPERAND(Object) = (Object*)takeString(chars, length);
+                    stackFront--;
+                    break;
+                }
+                case Instruction::string_size: { break; } // Unimplemented
+                    
+                // Casting
+                case Instruction::int_from_uint: { UNARY_OPERAND(Int) = (x_long)UNARY_OPERAND(UInt); break; }
+                case Instruction::int_from_double: { UNARY_OPERAND(Int) = (x_long)UNARY_OPERAND(Double); break; }
+                case Instruction::int_from_float: { UNARY_OPERAND(Int) = (x_long)UNARY_OPERAND(Float); break; }
+                case Instruction::uint_from_int: { UNARY_OPERAND(UInt) = (x_ulong)UNARY_OPERAND(Int); break; }
+                case Instruction::uint_from_double: { UNARY_OPERAND(UInt) = (x_ulong)UNARY_OPERAND(Double); break; }
+                case Instruction::uint_from_float: { UNARY_OPERAND(UInt) = (x_ulong)UNARY_OPERAND(Float); break; }
+                case Instruction::double_from_int: { UNARY_OPERAND(Double) = (x_double)UNARY_OPERAND(Int); break; }
+                case Instruction::double_from_uint: { UNARY_OPERAND(Double) = (x_double)UNARY_OPERAND(UInt); break; }
+                case Instruction::double_from_float: { UNARY_OPERAND(Double) = (x_double)UNARY_OPERAND(Float); break; }
+                case Instruction::float_from_int: { UNARY_OPERAND(Float) = (x_float)UNARY_OPERAND(Int); break; }
+                case Instruction::float_from_uint: { UNARY_OPERAND(Float) = (x_float)UNARY_OPERAND(UInt); break; }
+                case Instruction::float_from_double: { UNARY_OPERAND(Float) = (x_float)UNARY_OPERAND(Double); break; }
+                
+                // Trueness testing
+                case Instruction::bool_from_int: { UNARY_OPERAND(Bool) = UNARY_OPERAND(Int) == true; break; }
+                case Instruction::bool_from_uint: { UNARY_OPERAND(Bool) = UNARY_OPERAND(UInt) == true; break; }
+                case Instruction::bool_from_double: { UNARY_OPERAND(Bool) = UNARY_OPERAND(Double) == true; break; }
+                case Instruction::bool_from_float: { UNARY_OPERAND(Bool) = UNARY_OPERAND(Float) == true; break; }
+                case Instruction::bool_from_string: { UNARY_OPERAND(Bool) = ((StringObject*)UNARY_OPERAND(Object))->Size > 0; break; }
+                    
+                // Comparisons
+                case Instruction::int_equal: { LEFT_OPERAND(Bool) = (LEFT_OPERAND(Int) == RIGHT_OPERAND(Int)); stackFront--; break; }
+                case Instruction::int_not_equal: { LEFT_OPERAND(Bool) = (LEFT_OPERAND(Int) != RIGHT_OPERAND(Int)); stackFront--; break; }
+                case Instruction::int_greater: { LEFT_OPERAND(Bool) = (LEFT_OPERAND(Int) > RIGHT_OPERAND(Int)); stackFront--; break; }
+                case Instruction::int_less: { LEFT_OPERAND(Bool) = (LEFT_OPERAND(Int) < RIGHT_OPERAND(Int)); stackFront--; break; }
+                case Instruction::int_greater_or_equal: { LEFT_OPERAND(Bool) = (LEFT_OPERAND(Int) >= RIGHT_OPERAND(Int)); stackFront--; break; }
+                case Instruction::int_less_or_equal: { LEFT_OPERAND(Bool) = (LEFT_OPERAND(Int) <= RIGHT_OPERAND(Int)); stackFront--; break; }
+                case Instruction::uint_equal: { LEFT_OPERAND(Bool) = (LEFT_OPERAND(UInt) == RIGHT_OPERAND(UInt)); stackFront--; break; }
+                case Instruction::uint_not_equal: { LEFT_OPERAND(Bool) = (LEFT_OPERAND(UInt) != RIGHT_OPERAND(UInt)); stackFront--; break; }
+                case Instruction::uint_greater: { LEFT_OPERAND(Bool) = (LEFT_OPERAND(UInt) > RIGHT_OPERAND(UInt)); stackFront--; break; }
+                case Instruction::uint_less: { LEFT_OPERAND(Bool) = (LEFT_OPERAND(UInt) < RIGHT_OPERAND(UInt)); stackFront--; break; }
+                case Instruction::uint_greater_or_equal: { LEFT_OPERAND(Bool) = (LEFT_OPERAND(UInt) >= RIGHT_OPERAND(UInt)); stackFront--; break; }
+                case Instruction::uint_less_or_equal: { LEFT_OPERAND(Bool) = (LEFT_OPERAND(UInt) <= RIGHT_OPERAND(UInt)); stackFront--; break; }
+                case Instruction::double_equal: { LEFT_OPERAND(Bool) = (LEFT_OPERAND(Double) == RIGHT_OPERAND(Double)); stackFront--; break; }
+                case Instruction::double_not_equal: { LEFT_OPERAND(Bool) = (LEFT_OPERAND(Double) != RIGHT_OPERAND(Double)); stackFront--; break; }
+                case Instruction::double_greater: { LEFT_OPERAND(Bool) = (LEFT_OPERAND(Double) > RIGHT_OPERAND(Double)); stackFront--; break; }
+                case Instruction::double_less: { LEFT_OPERAND(Bool) = (LEFT_OPERAND(Double) < RIGHT_OPERAND(Double)); stackFront--; break; }
+                case Instruction::double_greater_or_equal: { LEFT_OPERAND(Bool) = (LEFT_OPERAND(Double) >= RIGHT_OPERAND(Double)); stackFront--; break; }
+                case Instruction::double_less_or_equal: { LEFT_OPERAND(Bool) = (LEFT_OPERAND(Double) <= RIGHT_OPERAND(Double)); stackFront--; break; }
+                case Instruction::float_equal: { LEFT_OPERAND(Bool) = (LEFT_OPERAND(Float) == RIGHT_OPERAND(Float)); stackFront--; break; }
+                case Instruction::float_not_equal: { LEFT_OPERAND(Bool) = (LEFT_OPERAND(Float) != RIGHT_OPERAND(Float)); stackFront--; break; }
+                case Instruction::float_greater: { LEFT_OPERAND(Bool) = (LEFT_OPERAND(Float) > RIGHT_OPERAND(Float)); stackFront--; break; }
+                case Instruction::float_less: { LEFT_OPERAND(Bool) = (LEFT_OPERAND(Float) < RIGHT_OPERAND(Float)); stackFront--; break; }
+                case Instruction::float_greater_or_equal: { LEFT_OPERAND(Bool) = (LEFT_OPERAND(Float) >= RIGHT_OPERAND(Float)); stackFront--; break; }
+                case Instruction::float_less_or_equal: { LEFT_OPERAND(Bool) = (LEFT_OPERAND(Float) <= RIGHT_OPERAND(Float)); stackFront--; break; }
+                case Instruction::string_equal:
+                {
+                    StringObject* left = ((StringObject*)LEFT_OPERAND(Object));
+                    StringObject* right = ((StringObject*)RIGHT_OPERAND(Object));
+                    LEFT_OPERAND(Bool) = (left->Size == right->Size) && (std::memcmp(left->Chars, right->Chars, left->Size) == 0);
+                    delete[] left->Chars;
+                    delete left;
+                    delete[] right->Chars;
+                    delete right;
+                    stackFront--;
+                    break;
+                }
+                case Instruction::string_not_equal:
+                {
+                    StringObject* left = ((StringObject*)LEFT_OPERAND(Object));
+                    StringObject* right = ((StringObject*)RIGHT_OPERAND(Object));
+                    LEFT_OPERAND(Bool) = (left->Size != right->Size) || (std::memcmp(left->Chars, right->Chars, left->Size) != 0);
+                    delete[] left->Chars;
+                    delete left;
+                    delete[] right->Chars;
+                    delete right;
+                    stackFront--;
+                    break;
+                }
+                    
+                // Stack Usage
+                case Instruction::push_value: { *stackFront = *constantsFront; constantsFront++; stackFront++; break; }
+                case Instruction::push_size:
+                {
+                    x_ulong size = constantsFront->UInt;
+                    std::memcpy(stackFront, constantsFront + 1, size);
+                    stackFront += size;
+                    constantsFront += size + 1;
+                    break;
+                }
+                case Instruction::pop_value: { m_StackFront--; }
+                case Instruction::pop_size:
+                {
+                    x_ulong size = constantsFront->UInt;
+                    stackFront -= size;
+                    constantsFront++;
+                    break;
+                }
+                case Instruction::print_int: { std::cout << UNARY_OPERAND(Int) << std::endl; break; }
+                case Instruction::print_uint: { std::cout << UNARY_OPERAND(UInt) << std::endl; break; }
+                case Instruction::print_double: { std::cout << UNARY_OPERAND(Double) << std::endl; break; }
+                case Instruction::print_float: { std::cout << UNARY_OPERAND(Float) << std::endl; break; }
+                case Instruction::print_bool: { std::cout << UNARY_OPERAND(Bool) << std::endl; break; }
+                case Instruction::print_string: { std::cout << ((StringObject*)UNARY_OPERAND(Object))->Chars << std::endl; break; }
+                default: Error("Unknown instruction!"); break;
+            }
 			functionData++;
 		}
 	}

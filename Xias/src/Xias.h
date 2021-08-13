@@ -4,3 +4,4 @@
 #include "types.h"
 #include "vm.h"
 #include "lexer.h"
+#include "object.h"
