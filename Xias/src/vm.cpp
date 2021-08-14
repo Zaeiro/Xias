@@ -4,6 +4,8 @@
 #include "object.h"
 #include "memory.h"
 
+#include <iostream>
+
 #define AS_DOUBLE(value) (value->Double)
 #define AS_FLOAT(value) (value->Float)
 #define AS_INT(value) (value->Int)
@@ -20,12 +22,10 @@ namespace Xias {
 	Vm::Vm()
 	{
 		m_Stack.resize(32 * sizeof(int));
-		m_StackFront = m_Stack.data();
 	}
 
 	void Vm::CallFunction(std::vector<Instruction>& function, std::vector<Value>& constants)
 	{
-		//m_StackFront = m_Stack.data();
 		Value* stackFront = m_Stack.data();
 		Instruction* functionData = function.data();
 		Instruction* functionEnd = &(*function.begin()) + function.size();
@@ -198,6 +198,55 @@ namespace Xias {
                     stackFront--;
                     break;
                 }
+                
+                // Control flow
+                case Instruction::jump_if_false:
+                {
+                    x_ulong offset = constantsFront->UInt;
+                    if (UNARY_OPERAND(Bool) == false)
+                        functionData += offset;
+                    constantsFront++;
+                    // Doesn't decrement the stack pointer
+                }
+                case Instruction::jump:
+                {
+                    x_ulong offset = constantsFront->UInt;
+                    functionData += offset;
+                    constantsFront++;
+                }
+                    
+                // Variables
+                case Instruction::set_global:
+                {
+                    x_ulong address = constantsFront->UInt;
+                    m_Globals[address] = *(stackFront - 1);
+                    constantsFront++;
+                    stackFront--;
+                    break;
+                }
+                case Instruction::get_global:
+                {
+                    x_ulong address = constantsFront->UInt;
+                    *stackFront = m_Globals[address];
+                    constantsFront++;
+                    stackFront++;
+                    break;
+                }
+                case Instruction::set_local:
+                {
+                    x_ulong slot = constantsFront->UInt;
+                    m_Stack[slot] = *(stackFront - 1);
+                    constantsFront++;
+                    break;
+                }
+                case Instruction::get_local:
+                {
+                    x_ulong slot = constantsFront->UInt;
+                    *stackFront = m_Stack[slot];
+                    constantsFront++;
+                    stackFront++;
+                    break;
+                }
                     
                 // Stack Usage
                 case Instruction::push_value: { *stackFront = *constantsFront; constantsFront++; stackFront++; break; }
@@ -209,7 +258,7 @@ namespace Xias {
                     constantsFront += size + 1;
                     break;
                 }
-                case Instruction::pop_value: { m_StackFront--; }
+                case Instruction::pop_value: { stackFront--; }
                 case Instruction::pop_size:
                 {
                     x_ulong size = constantsFront->UInt;
@@ -232,6 +281,21 @@ namespace Xias {
 	void Vm::Error(const char* msg)
 	{
 		std::cerr << msg;
-	}
+    }
+
+    void Vm::AddGlobal(std::string name, Value value) {
+        m_GlobalNames.insert({ name, m_Globals.size() });
+        m_Globals.emplace_back(value);
+    }
+
+    Value Vm::GetGlobal(std::string name) {
+        auto iter = m_GlobalNames.find(name);
+        if (iter != m_GlobalNames.end())
+            return m_Globals[iter->second];
+        Error("Global not found!");
+        return Value{.UInt = 0};
+    }
+
+
 
 }

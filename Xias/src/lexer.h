@@ -1,8 +1,8 @@
 #pragma once
 #include <vector>
 #include <functional>
-#include <stdio.h>
-#include <ctype.h>
+#include <cstdio>
+#include <iostream>
 
 namespace Xias {
 

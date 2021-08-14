@@ -103,6 +103,15 @@ namespace Xias {
         string_equal,
         string_not_equal,
         
+        jump_if_false,
+        jump,
+        
+        set_global,
+        get_global,
+        
+        set_local,
+        get_local,
+        
 		push_value,
 		push_size,
 
