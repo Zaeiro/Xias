@@ -1,11 +1,16 @@
 #pragma once
 
+#include "types.h"
+
 #include <cstdint>
 
 namespace Xias {
 
-	enum class Instruction : uint16_t
+    using op_type = _x_short;
+
+	enum class Instruction : op_type
 	{
+        // Arithmetic
 		int_inc,
 		int_dec,
 		int_add,
@@ -42,9 +47,11 @@ namespace Xias {
         float_mod,
         float_pow,
         
+        // String operations
         string_add,
         string_size,
         
+        // Casting
 		int_from_uint,
 		int_from_double,
         int_from_float,
@@ -61,17 +68,20 @@ namespace Xias {
         float_from_uint,
         float_from_double,
         
+        // Unimplemented
         string_from_int,
         string_from_uint,
         string_from_double,
         string_from_float,
         
+        // Trueness testing
         bool_from_int,
         bool_from_uint,
         bool_from_double,
         bool_from_float,
         bool_from_string,
         
+        // Comparisons
         int_equal,
         int_not_equal,
         int_greater,
@@ -103,21 +113,27 @@ namespace Xias {
         string_equal,
         string_not_equal,
         
+        // Control flow
         jump_if_false,
+        jump_if_false_chain,
         jump,
+        loop,
         
+        // Variables
         set_global,
         get_global,
         
         set_local,
         get_local,
         
+        // Stack Usage
 		push_value,
 		push_size,
 
 		pop_value,
 		pop_size,
         
+        // Printing
         print_int,
         print_uint,
         print_double,
@@ -125,5 +141,11 @@ namespace Xias {
         print_bool,
         print_string,
 	};
+
+    union OpType
+    {
+        Instruction Op;
+        op_type Data;
+    };
 
 }

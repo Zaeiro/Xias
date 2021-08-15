@@ -23,7 +23,7 @@ namespace Xias {
         void AddGlobal(std::string name, Value value);
         Value GetGlobal(std::string name);
         
-		void CallFunction(std::vector<Instruction>& function, std::vector<Value>& constants);
+		void CallFunction(std::vector<OpType>& function, std::vector<Value>& constants);
 
 //		template <typename TReturn, typename... TArgs>
 //		TReturn CallStaticMethod(x_methodID method, TArgs... args)

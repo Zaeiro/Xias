@@ -5,6 +5,8 @@
 
 namespace Xias {
 
+	using _x_short = uint16_t;
+
     using x_double = double;
     using x_float = float;
     using x_long = int64_t;
@@ -19,7 +21,7 @@ namespace Xias {
 
 	struct Object;
 
-	typedef union
+	union Value
 	{
 		x_double Double;
         x_float Float;
@@ -27,7 +29,7 @@ namespace Xias {
 		x_ulong UInt;
         x_bool Bool;
 		Object* Object;
-	} Value;
+	};
 
 //	// Classes, structs, etc
 //	struct Type

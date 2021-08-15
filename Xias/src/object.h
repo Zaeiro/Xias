@@ -2,7 +2,7 @@
 
 #include "types.h"
 
-#define OBJ_VAL(object) (Xias::Value{.Object = (Xias::Object*)object})
+#define OBJ_VAL(object) (Xias::Value{ .Object = (Xias::Object*)object })
 
 #define OBJ_TYPE(value) (AS_OBJ(value)->Type)
 

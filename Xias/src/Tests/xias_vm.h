@@ -8,27 +8,33 @@
 
 inline void test_vm()
 {
-	std::vector<Xias::Instruction> data;
-    data.emplace_back(Xias::Instruction::push_value);
-    data.emplace_back(Xias::Instruction::double_from_int);
-    data.emplace_back(Xias::Instruction::push_value);
-    data.emplace_back(Xias::Instruction::double_add);
-    data.emplace_back(Xias::Instruction::print_double);
-    data.emplace_back(Xias::Instruction::push_value);
-    data.emplace_back(Xias::Instruction::double_add);
-    data.emplace_back(Xias::Instruction::print_double);
-    data.emplace_back(Xias::Instruction::push_value);
-    data.emplace_back(Xias::Instruction::print_string);
-    data.emplace_back(Xias::Instruction::push_value);
-    data.emplace_back(Xias::Instruction::print_string);
-    data.emplace_back(Xias::Instruction::string_add);
-    data.emplace_back(Xias::Instruction::print_string);
-    data.emplace_back(Xias::Instruction::push_value);
-    data.emplace_back(Xias::Instruction::print_string);
-    data.emplace_back(Xias::Instruction::string_add);
-    data.emplace_back(Xias::Instruction::print_string);
+	std::vector<Xias::OpType> data;
+    data.emplace_back(Xias::OpType{ .Op = Xias::Instruction::push_value });
+    data.emplace_back(Xias::OpType{ .Data = 0 });
+    data.emplace_back(Xias::OpType{ .Op = Xias::Instruction::double_from_int });
+    data.emplace_back(Xias::OpType{ .Op = Xias::Instruction::push_value });
+    data.emplace_back(Xias::OpType{ .Data = 1 });
+    data.emplace_back(Xias::OpType{ .Op = Xias::Instruction::double_add });
+    data.emplace_back(Xias::OpType{ .Op = Xias::Instruction::print_double });
+    data.emplace_back(Xias::OpType{ .Op = Xias::Instruction::push_value });
+    data.emplace_back(Xias::OpType{ .Data = 2 });
+    data.emplace_back(Xias::OpType{ .Op = Xias::Instruction::double_add });
+    data.emplace_back(Xias::OpType{ .Op = Xias::Instruction::print_double });
+    data.emplace_back(Xias::OpType{ .Op = Xias::Instruction::push_value });
+    data.emplace_back(Xias::OpType{ .Data = 3 });
+    data.emplace_back(Xias::OpType{ .Op = Xias::Instruction::print_string });
+    data.emplace_back(Xias::OpType{ .Op = Xias::Instruction::push_value });
+    data.emplace_back(Xias::OpType{ .Data = 4 });
+    data.emplace_back(Xias::OpType{ .Op = Xias::Instruction::print_string });
+    data.emplace_back(Xias::OpType{ .Op = Xias::Instruction::string_add });
+    data.emplace_back(Xias::OpType{ .Op = Xias::Instruction::print_string });
+    data.emplace_back(Xias::OpType{ .Op = Xias::Instruction::push_value });
+    data.emplace_back(Xias::OpType{ .Data = 5 });
+    data.emplace_back(Xias::OpType{ .Op = Xias::Instruction::print_string });
+    data.emplace_back(Xias::OpType{ .Op = Xias::Instruction::string_add });
+    data.emplace_back(Xias::OpType{ .Op = Xias::Instruction::print_string });
     
-    data.resize(18);
+    data.resize(24);
     std::vector<Xias::Value> constants;
     Xias::Value xint;
     xint.Int = 3;
