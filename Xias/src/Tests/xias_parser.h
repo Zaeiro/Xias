@@ -11,7 +11,4 @@ inline void test_lexer()
 
 	std::vector<Xias::Token> tokens = lexer.Analyse("myInt++;myInt--;\n// comment test\nmyInt += 1;/*myInt = 1;\nmyInt += 2;*/myInt--;");
 	lexer.PrintTokens(tokens);
-	
-	std::cout << "All tests done" << std::endl;
-	std::cin.get();
 }

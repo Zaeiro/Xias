@@ -1,8 +1,9 @@
 #pragma once
 
 #include "types.h"
+#include "bytecode.h"
 
-#define OBJ_VAL(object) (Xias::Value{ .Object = (Xias::Object*)object })
+#define OBJ_VAL(object) ( Xias::Value{(Xias::x_object*)object} )
 
 #define OBJ_TYPE(value) (AS_OBJ(value)->Type)
 
@@ -13,22 +14,32 @@ namespace Xias {
 
     enum class ObjectType
     {
+		function_object,
         string_object,
     };
 
-    struct Object
+    struct x_object
     {
         ObjectType Type;
     };
 
     struct StringObject
     {
-        Object Object;
+        x_object Object;
         x_ulong Size;
         char* Chars = nullptr;
     };
 
-    StringObject* takeString(char* chars, x_ulong length);
-    StringObject* copyString(const char* chars, x_ulong length);
+	struct FunctionObject
+	{
+		x_object Object;
+		int Arity;
+		Bytecode Code;
+		StringObject* Name;
+	};
+
+	FunctionObject* NewFunction();
+    StringObject* TakeString(char* chars, x_ulong length);
+    StringObject* CopyString(const char* chars, x_ulong length);
 
 }

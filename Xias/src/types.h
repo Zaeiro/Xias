@@ -7,11 +7,11 @@ namespace Xias {
 
 	using _x_short = uint16_t;
 
-    using x_double = double;
-    using x_float = float;
-    using x_long = int64_t;
+	using x_double = double;
+	using x_float = float;
+	using x_long = int64_t;
 	using x_ulong = uint64_t;
-    using x_bool = bool;
+	using x_bool = bool;
 
 //	struct _x_fieldID;
 //	using x_fieldID = _x_fieldID*;
@@ -19,16 +19,26 @@ namespace Xias {
 //	struct _x_methodID;
 //	using x_methodID = _x_methodID*;
 
-	struct Object;
+	struct x_object;
 
 	union Value
 	{
 		x_double Double;
-        x_float Float;
+		x_float Float;
 		x_long Int;
 		x_ulong UInt;
-        x_bool Bool;
-		Object* Object;
+		x_bool Bool;
+		x_object* Object;
+
+		Value() {}
+		Value(x_double _double) : Double(_double) {}
+		Value(x_float _float) : Float(_float) {}
+		Value(int _int) : Int(_int) {}
+		Value(unsigned int _uint) : UInt(_uint) {}
+		Value(x_long _int) : Int(_int) {}
+		Value(x_ulong _uint) : UInt(_uint) {}
+		Value(x_bool _bool) : Bool(_bool) {}
+		Value(x_object* _object) : Object(_object) {}
 	};
 
 //	// Classes, structs, etc
