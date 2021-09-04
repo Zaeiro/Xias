@@ -15,6 +15,8 @@ namespace Xias {
     enum class ObjectType
     {
 		function_object,
+		native_function_object,
+		void_native_function_object,
         string_object,
     };
 
@@ -38,7 +40,25 @@ namespace Xias {
 		StringObject* Name;
 	};
 
+	typedef Value(*NativeFn)(int argCount, Value* args);
+
+	struct NativeObject
+	{
+		x_object Object;
+		NativeFn Function;
+	};
+
+	typedef void(*VoidNativeFn)(int argCount, Value* args);
+
+	struct VoidNativeObject
+	{
+		x_object Object;
+		VoidNativeFn Function;
+	};
+
 	FunctionObject* NewFunction();
+	NativeObject* NewNative(NativeFn function);
+	VoidNativeObject* NewVoidNative(VoidNativeFn function);
     StringObject* TakeString(char* chars, x_ulong length);
     StringObject* CopyString(const char* chars, x_ulong length);
 

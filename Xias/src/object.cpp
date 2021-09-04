@@ -3,17 +3,17 @@
 #include "memory.h"
 #include "types.h"
 
-#define ALLOCATE_OBJ(type, objectType) \
-    (type*)AllocateObject(sizeof(type), objectType)
+#define ALLOCATE_OBJ(type, objectType) AllocObject<type>(objectType)
 
 namespace Xias {
 
-    static x_object* AllocateObject(size_t size, ObjectType type)
+	template<typename T>
+	static T* AllocObject(ObjectType type)
 	{
-        x_object* object = (x_object*)reallocate(NULL, 0, size);
-		object->Type = type;
-        return object;
-    }
+		T* obj = new T();
+		obj->Object.Type = type;
+		return obj;
+	}
 
     static StringObject* AllocateString(char* chars, x_ulong length)
 	{
@@ -27,8 +27,23 @@ namespace Xias {
 	{
 		FunctionObject* function = ALLOCATE_OBJ(FunctionObject, ObjectType::function_object);
 		function->Arity = 0;
+		function->Code = Bytecode{};
 		function->Name = nullptr;
 		return function;
+	}
+
+	NativeObject* NewNative(NativeFn function)
+	{
+		NativeObject* native = ALLOCATE_OBJ(NativeObject, ObjectType::native_function_object);
+		native->Function = function;
+		return native;
+	}
+
+	VoidNativeObject* NewVoidNative(VoidNativeFn function)
+	{
+		VoidNativeObject* native = ALLOCATE_OBJ(VoidNativeObject, ObjectType::void_native_function_object);
+		native->Function = function;
+		return native;
 	}
 
 	StringObject* TakeString(char* chars, x_ulong length)

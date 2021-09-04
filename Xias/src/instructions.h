@@ -119,6 +119,11 @@ namespace Xias {
 		jump,
 		loop,
 		
+		// Functions
+		func_call,
+		func_return,
+		func_return_void,
+
 		// Variables
 		set_global,
 		get_global,

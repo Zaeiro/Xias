@@ -17,95 +17,143 @@
 #define RIGHT_OPERAND(type) ((sp - 1)->type)
 #define UNARY_OPERAND(type) ((sp - 1)->type)
 
-#define READ_CONSTANT(type) bytecode.Constants[(++ip)->Data].type;
-#define READ_SHORT() (++ip)->Data;
+#define READ_CONSTANT(type) frame->Function->Code.Constants[(++frame->ip)->Data].type;
+#define READ_CONST() frame->Function->Code.Constants[(++frame->ip)->Data] 
+#define READ_SHORT() (++frame->ip)->Data;
+
+#define DEC() (sp--)
+#define POP() (*sp--)
 
 namespace Xias {
 
 	Vm::Vm()
 	{
+		m_Frames.resize(64);
 		m_Stack.resize(64);
+		sp = m_Stack.data();
+	}
+
+	void Vm::RegisterFunction(const std::string& name, NativeFn function)
+	{
+		push(OBJ_VAL(NewNative(function)));
+		AddGlobal(name, m_Stack[0]);
+		DEC();
+	}
+
+	void Vm::RegisterVoidFunction(const std::string& name, VoidNativeFn function)
+	{
+		push(OBJ_VAL(NewVoidNative(function)));
+		AddGlobal(name, m_Stack[0]);
+		DEC();
+	}
+
+	void Vm::AddGlobal(const std::string& name, Value& value)
+	{
+		m_GlobalNames.insert({ name, m_Globals.size() });
+		m_Globals.emplace_back(value);
+	}
+
+	Value Vm::GetGlobal(const std::string& name)
+	{
+		auto iter = m_GlobalNames.find(name);
+		if (iter != m_GlobalNames.end())
+			return m_Globals[iter->second];
+		Error("Global not found!");
+		return Value{ 0U };
 	}
 
 	void Vm::CallFunction(Bytecode& bytecode)
 	{
-		Value* sp = m_Stack.data();
-		OpType* ip = bytecode.Code.data();
-		OpType* ie = &(*bytecode.Code.begin()) + bytecode.Code.size();
-		if (ip == ie)
+		// Creating function to hold supplied bytecode
+		FunctionObject* function = NewFunction();
+		function->Code = bytecode;
+		m_Stack[0] = OBJ_VAL(function);
+
+		// Calling this function
+		CallFrame* newFrame = &m_Frames[m_FrameCount++];
+		newFrame->Function = function;
+		newFrame->ip = &function->Code.Code.front();
+		newFrame->fp = m_Stack.data();
+
+		// Running the VM
+		CallFrame* frame = &m_Frames[m_FrameCount - 1];
+
+		sp = &m_Stack[1];
+		OpType* ie = &(*frame->Function->Code.Code.begin()) + frame->Function->Code.Code.size();
+		if (frame->ip == ie)
 			return;
 
-		while (ip != ie)
+		while (frame->ip != ie)
 		{
 #ifdef X_DEBUG
-			if (ip >= ie)
+			if (frame->ip >= ie)
 			{
 				std::cout << "overpassed function end!\n";
 			}
 #endif
-			switch (ip->Op)
+			switch (frame->ip->Op)
 			{
 				// Arithmetic
 				case Instruction::int_inc: { UNARY_OPERAND(Int)++; break; }
 				case Instruction::int_dec: { UNARY_OPERAND(Int)--; break; }
-				case Instruction::int_add: { LEFT_OPERAND(Int) += RIGHT_OPERAND(Int); sp--; break; }
-				case Instruction::int_sub: { LEFT_OPERAND(Int) -= RIGHT_OPERAND(Int); sp--; break; }
-				case Instruction::int_mul: { LEFT_OPERAND(Int) *= RIGHT_OPERAND(Int); sp--; break; }
-				case Instruction::int_div: { LEFT_OPERAND(Int) /= RIGHT_OPERAND(Int); sp--; break; }
-				case Instruction::int_mod: { LEFT_OPERAND(Int) %= RIGHT_OPERAND(Int); sp--; break; }
+				case Instruction::int_add: { LEFT_OPERAND(Int) += RIGHT_OPERAND(Int); DEC(); break; }
+				case Instruction::int_sub: { LEFT_OPERAND(Int) -= RIGHT_OPERAND(Int); DEC(); break; }
+				case Instruction::int_mul: { LEFT_OPERAND(Int) *= RIGHT_OPERAND(Int); DEC(); break; }
+				case Instruction::int_div: { LEFT_OPERAND(Int) /= RIGHT_OPERAND(Int); DEC(); break; }
+				case Instruction::int_mod: { LEFT_OPERAND(Int) %= RIGHT_OPERAND(Int); DEC(); break; }
 				case Instruction::int_pow:
 				{
 					LEFT_OPERAND(Int) = (x_long)std::pow(LEFT_OPERAND(Int), RIGHT_OPERAND(Int));
-					sp--;
+					DEC();
 					break;
 				}
 				case Instruction::uint_inc: { UNARY_OPERAND(UInt)++; break; }
 				case Instruction::uint_dec: { UNARY_OPERAND(UInt)--; break; }
-				case Instruction::uint_add: { LEFT_OPERAND(UInt) += RIGHT_OPERAND(UInt); sp--; break; }
-				case Instruction::uint_sub: { LEFT_OPERAND(UInt) -= RIGHT_OPERAND(UInt); sp--; break; }
-				case Instruction::uint_mul: { LEFT_OPERAND(UInt) *= RIGHT_OPERAND(UInt); sp--; break; }
-				case Instruction::uint_div: { LEFT_OPERAND(UInt) /= RIGHT_OPERAND(UInt); sp--; break; }
-				case Instruction::uint_mod: { LEFT_OPERAND(UInt) %= RIGHT_OPERAND(UInt); sp--; break; }
+				case Instruction::uint_add: { LEFT_OPERAND(UInt) += RIGHT_OPERAND(UInt); DEC(); break; }
+				case Instruction::uint_sub: { LEFT_OPERAND(UInt) -= RIGHT_OPERAND(UInt); DEC(); break; }
+				case Instruction::uint_mul: { LEFT_OPERAND(UInt) *= RIGHT_OPERAND(UInt); DEC(); break; }
+				case Instruction::uint_div: { LEFT_OPERAND(UInt) /= RIGHT_OPERAND(UInt); DEC(); break; }
+				case Instruction::uint_mod: { LEFT_OPERAND(UInt) %= RIGHT_OPERAND(UInt); DEC(); break; }
 				case Instruction::uint_pow:
 				{
 					LEFT_OPERAND(UInt) = (x_ulong)std::pow(LEFT_OPERAND(UInt), RIGHT_OPERAND(UInt));
-					sp--;
+					DEC();
 					break;
 				}
 				case Instruction::double_inc: { UNARY_OPERAND(Double)++; break; }
 				case Instruction::double_dec: { UNARY_OPERAND(Double)--; break; }
-				case Instruction::double_add: { LEFT_OPERAND(Double) += RIGHT_OPERAND(Double); sp--; break; }
-				case Instruction::double_sub: { LEFT_OPERAND(Double) -= RIGHT_OPERAND(Double); sp--; break; }
-				case Instruction::double_mul: { LEFT_OPERAND(Double) *= RIGHT_OPERAND(Double); sp--; break; }
-				case Instruction::double_div: { LEFT_OPERAND(Double) /= RIGHT_OPERAND(Double); sp--; break; }
+				case Instruction::double_add: { LEFT_OPERAND(Double) += RIGHT_OPERAND(Double); DEC(); break; }
+				case Instruction::double_sub: { LEFT_OPERAND(Double) -= RIGHT_OPERAND(Double); DEC(); break; }
+				case Instruction::double_mul: { LEFT_OPERAND(Double) *= RIGHT_OPERAND(Double); DEC(); break; }
+				case Instruction::double_div: { LEFT_OPERAND(Double) /= RIGHT_OPERAND(Double); DEC(); break; }
 				case Instruction::double_mod:
 				{
 					LEFT_OPERAND(Double) = (x_double)std::fmod(LEFT_OPERAND(Double), RIGHT_OPERAND(Double));
-					sp--;
+					DEC();
 					break;
 				}
 				case Instruction::double_pow:
 				{
 					LEFT_OPERAND(Double) = (x_double)std::pow(LEFT_OPERAND(Double), RIGHT_OPERAND(Double));
-					sp--;
+					DEC();
 					break;
 				}
 				case Instruction::float_inc: { UNARY_OPERAND(Float)++; break; }
 				case Instruction::float_dec: { UNARY_OPERAND(Float)--; break; }
-				case Instruction::float_add: { LEFT_OPERAND(Float) += RIGHT_OPERAND(Float); sp--; break; }
-				case Instruction::float_sub: { LEFT_OPERAND(Float) -= RIGHT_OPERAND(Float); sp--; break; }
-				case Instruction::float_mul: { LEFT_OPERAND(Float) *= RIGHT_OPERAND(Float); sp--; break; }
-				case Instruction::float_div: { LEFT_OPERAND(Float) /= RIGHT_OPERAND(Float); sp--; break; }
+				case Instruction::float_add: { LEFT_OPERAND(Float) += RIGHT_OPERAND(Float); DEC(); break; }
+				case Instruction::float_sub: { LEFT_OPERAND(Float) -= RIGHT_OPERAND(Float); DEC(); break; }
+				case Instruction::float_mul: { LEFT_OPERAND(Float) *= RIGHT_OPERAND(Float); DEC(); break; }
+				case Instruction::float_div: { LEFT_OPERAND(Float) /= RIGHT_OPERAND(Float); DEC(); break; }
 				case Instruction::float_mod:
 				{
 					LEFT_OPERAND(Float) = (x_float)std::fmod(LEFT_OPERAND(Float), RIGHT_OPERAND(Float));
-					sp--;
+					DEC();
 					break;
 				}
 				case Instruction::float_pow:
 				{
 					LEFT_OPERAND(Float) = (x_float)std::powf(LEFT_OPERAND(Float), RIGHT_OPERAND(Float));
-					sp--;
+					DEC();
 					break;
 				}
 				
@@ -124,7 +172,7 @@ namespace Xias {
 					delete[] right->Chars;
 					delete right;
 					LEFT_OPERAND(Object) = (x_object*)TakeString(chars, length);
-					sp--;
+					DEC();
 					break;
 				}
 				case Instruction::string_size: { break; } // Unimplemented
@@ -159,30 +207,30 @@ namespace Xias {
 				}
 				
 				// Comparisons
-				case Instruction::int_equal: { LEFT_OPERAND(Bool) = (LEFT_OPERAND(Int) == RIGHT_OPERAND(Int)); sp--; break; }
-				case Instruction::int_not_equal: { LEFT_OPERAND(Bool) = (LEFT_OPERAND(Int) != RIGHT_OPERAND(Int)); sp--; break; }
-				case Instruction::int_greater: { LEFT_OPERAND(Bool) = (LEFT_OPERAND(Int) > RIGHT_OPERAND(Int)); sp--; break; }
-				case Instruction::int_less: { LEFT_OPERAND(Bool) = (LEFT_OPERAND(Int) < RIGHT_OPERAND(Int)); sp--; break; }
-				case Instruction::int_greater_or_equal: { LEFT_OPERAND(Bool) = (LEFT_OPERAND(Int) >= RIGHT_OPERAND(Int)); sp--; break; }
-				case Instruction::int_less_or_equal: { LEFT_OPERAND(Bool) = (LEFT_OPERAND(Int) <= RIGHT_OPERAND(Int)); sp--; break; }
-				case Instruction::uint_equal: { LEFT_OPERAND(Bool) = (LEFT_OPERAND(UInt) == RIGHT_OPERAND(UInt)); sp--; break; }
-				case Instruction::uint_not_equal: { LEFT_OPERAND(Bool) = (LEFT_OPERAND(UInt) != RIGHT_OPERAND(UInt)); sp--; break; }
-				case Instruction::uint_greater: { LEFT_OPERAND(Bool) = (LEFT_OPERAND(UInt) > RIGHT_OPERAND(UInt)); sp--; break; }
-				case Instruction::uint_less: { LEFT_OPERAND(Bool) = (LEFT_OPERAND(UInt) < RIGHT_OPERAND(UInt)); sp--; break; }
-				case Instruction::uint_greater_or_equal: { LEFT_OPERAND(Bool) = (LEFT_OPERAND(UInt) >= RIGHT_OPERAND(UInt)); sp--; break; }
-				case Instruction::uint_less_or_equal: { LEFT_OPERAND(Bool) = (LEFT_OPERAND(UInt) <= RIGHT_OPERAND(UInt)); sp--; break; }
-				case Instruction::double_equal: { LEFT_OPERAND(Bool) = (LEFT_OPERAND(Double) == RIGHT_OPERAND(Double)); sp--; break; }
-				case Instruction::double_not_equal: { LEFT_OPERAND(Bool) = (LEFT_OPERAND(Double) != RIGHT_OPERAND(Double)); sp--; break; }
-				case Instruction::double_greater: { LEFT_OPERAND(Bool) = (LEFT_OPERAND(Double) > RIGHT_OPERAND(Double)); sp--; break; }
-				case Instruction::double_less: { LEFT_OPERAND(Bool) = (LEFT_OPERAND(Double) < RIGHT_OPERAND(Double)); sp--; break; }
-				case Instruction::double_greater_or_equal: { LEFT_OPERAND(Bool) = (LEFT_OPERAND(Double) >= RIGHT_OPERAND(Double)); sp--; break; }
-				case Instruction::double_less_or_equal: { LEFT_OPERAND(Bool) = (LEFT_OPERAND(Double) <= RIGHT_OPERAND(Double)); sp--; break; }
-				case Instruction::float_equal: { LEFT_OPERAND(Bool) = (LEFT_OPERAND(Float) == RIGHT_OPERAND(Float)); sp--; break; }
-				case Instruction::float_not_equal: { LEFT_OPERAND(Bool) = (LEFT_OPERAND(Float) != RIGHT_OPERAND(Float)); sp--; break; }
-				case Instruction::float_greater: { LEFT_OPERAND(Bool) = (LEFT_OPERAND(Float) > RIGHT_OPERAND(Float)); sp--; break; }
-				case Instruction::float_less: { LEFT_OPERAND(Bool) = (LEFT_OPERAND(Float) < RIGHT_OPERAND(Float)); sp--; break; }
-				case Instruction::float_greater_or_equal: { LEFT_OPERAND(Bool) = (LEFT_OPERAND(Float) >= RIGHT_OPERAND(Float)); sp--; break; }
-				case Instruction::float_less_or_equal: { LEFT_OPERAND(Bool) = (LEFT_OPERAND(Float) <= RIGHT_OPERAND(Float)); sp--; break; }
+				case Instruction::int_equal: { LEFT_OPERAND(Bool) = (LEFT_OPERAND(Int) == RIGHT_OPERAND(Int)); DEC(); break; }
+				case Instruction::int_not_equal: { LEFT_OPERAND(Bool) = (LEFT_OPERAND(Int) != RIGHT_OPERAND(Int)); DEC(); break; }
+				case Instruction::int_greater: { LEFT_OPERAND(Bool) = (LEFT_OPERAND(Int) > RIGHT_OPERAND(Int)); DEC(); break; }
+				case Instruction::int_less: { LEFT_OPERAND(Bool) = (LEFT_OPERAND(Int) < RIGHT_OPERAND(Int)); DEC(); break; }
+				case Instruction::int_greater_or_equal: { LEFT_OPERAND(Bool) = (LEFT_OPERAND(Int) >= RIGHT_OPERAND(Int)); DEC(); break; }
+				case Instruction::int_less_or_equal: { LEFT_OPERAND(Bool) = (LEFT_OPERAND(Int) <= RIGHT_OPERAND(Int)); DEC(); break; }
+				case Instruction::uint_equal: { LEFT_OPERAND(Bool) = (LEFT_OPERAND(UInt) == RIGHT_OPERAND(UInt)); DEC(); break; }
+				case Instruction::uint_not_equal: { LEFT_OPERAND(Bool) = (LEFT_OPERAND(UInt) != RIGHT_OPERAND(UInt)); DEC(); break; }
+				case Instruction::uint_greater: { LEFT_OPERAND(Bool) = (LEFT_OPERAND(UInt) > RIGHT_OPERAND(UInt)); DEC(); break; }
+				case Instruction::uint_less: { LEFT_OPERAND(Bool) = (LEFT_OPERAND(UInt) < RIGHT_OPERAND(UInt)); DEC(); break; }
+				case Instruction::uint_greater_or_equal: { LEFT_OPERAND(Bool) = (LEFT_OPERAND(UInt) >= RIGHT_OPERAND(UInt)); DEC(); break; }
+				case Instruction::uint_less_or_equal: { LEFT_OPERAND(Bool) = (LEFT_OPERAND(UInt) <= RIGHT_OPERAND(UInt)); DEC(); break; }
+				case Instruction::double_equal: { LEFT_OPERAND(Bool) = (LEFT_OPERAND(Double) == RIGHT_OPERAND(Double)); DEC(); break; }
+				case Instruction::double_not_equal: { LEFT_OPERAND(Bool) = (LEFT_OPERAND(Double) != RIGHT_OPERAND(Double)); DEC(); break; }
+				case Instruction::double_greater: { LEFT_OPERAND(Bool) = (LEFT_OPERAND(Double) > RIGHT_OPERAND(Double)); DEC(); break; }
+				case Instruction::double_less: { LEFT_OPERAND(Bool) = (LEFT_OPERAND(Double) < RIGHT_OPERAND(Double)); DEC(); break; }
+				case Instruction::double_greater_or_equal: { LEFT_OPERAND(Bool) = (LEFT_OPERAND(Double) >= RIGHT_OPERAND(Double)); DEC(); break; }
+				case Instruction::double_less_or_equal: { LEFT_OPERAND(Bool) = (LEFT_OPERAND(Double) <= RIGHT_OPERAND(Double)); DEC(); break; }
+				case Instruction::float_equal: { LEFT_OPERAND(Bool) = (LEFT_OPERAND(Float) == RIGHT_OPERAND(Float)); DEC(); break; }
+				case Instruction::float_not_equal: { LEFT_OPERAND(Bool) = (LEFT_OPERAND(Float) != RIGHT_OPERAND(Float)); DEC(); break; }
+				case Instruction::float_greater: { LEFT_OPERAND(Bool) = (LEFT_OPERAND(Float) > RIGHT_OPERAND(Float)); DEC(); break; }
+				case Instruction::float_less: { LEFT_OPERAND(Bool) = (LEFT_OPERAND(Float) < RIGHT_OPERAND(Float)); DEC(); break; }
+				case Instruction::float_greater_or_equal: { LEFT_OPERAND(Bool) = (LEFT_OPERAND(Float) >= RIGHT_OPERAND(Float)); DEC(); break; }
+				case Instruction::float_less_or_equal: { LEFT_OPERAND(Bool) = (LEFT_OPERAND(Float) <= RIGHT_OPERAND(Float)); DEC(); break; }
 				case Instruction::string_equal:
 				{
 					StringObject* left = ((StringObject*)LEFT_OPERAND(Object));
@@ -193,7 +241,7 @@ namespace Xias {
 					delete[] right->Chars;
 					delete right;
 					LEFT_OPERAND(Bool) = result;
-					sp--;
+					DEC();
 					break;
 				}
 				case Instruction::string_not_equal:
@@ -206,7 +254,7 @@ namespace Xias {
 					delete[] right->Chars;
 					delete right;
 					LEFT_OPERAND(Bool) = result;
-					sp--;
+					DEC();
 					break;
 				}
 				
@@ -215,31 +263,101 @@ namespace Xias {
 				{
 					_x_short offset = READ_SHORT();
 					if (UNARY_OPERAND(Bool) == false)
-						ip += offset;
-					sp--;
+						frame->ip += offset;
+					DEC();
 					break;
 				}
 				case Instruction::jump_if_false_chain:
 				{
 					_x_short offset = READ_SHORT();
 					if (UNARY_OPERAND(Bool) == false)
-						ip += offset;
+						frame->ip += offset;
 					break;
 					// Doesn't decrement the stack pointer
 				}
 				case Instruction::jump:
 				{
 					_x_short offset = READ_SHORT();
-					ip += offset;
+					frame->ip += offset;
 					break;
 				}
 				case Instruction::loop:
 				{
 					_x_short offset = READ_SHORT();
-					ip -= offset;
+					frame->ip -= offset;
 					break;
 				}
-				
+
+				// Functions
+				case Instruction::func_call:
+				{
+					_x_short argCount = READ_SHORT();
+					Value* callable = (sp - (argCount + 1));
+					// TODO: Extract to lone function
+					switch (OBJ_TYPE(callable))
+					{
+						case ObjectType::function_object:
+						{
+							CallFrame* newFrame = &m_Frames[m_FrameCount++];
+							newFrame->Function = (FunctionObject*)(callable->Object);
+							newFrame->ip = newFrame->Function->Code.Code.data();
+							newFrame->fp = sp - argCount - 1;
+
+							frame = newFrame;
+							break;
+						}
+						case ObjectType::native_function_object:
+						{
+							NativeObject* native = (NativeObject*)(callable->Object);
+							Value result = native->Function(argCount, sp - argCount);
+							sp -= argCount + 1;
+							*sp++ = result;
+							break;
+						}
+						case ObjectType::void_native_function_object:
+						{
+							VoidNativeObject* native = (VoidNativeObject*)(callable->Object);
+							native->Function(argCount, sp - argCount);
+							sp -= argCount + 1;
+							break;
+						}
+						default:
+						{
+							Error("Can not call supplied object.");
+							break;
+						}
+					}
+					break;
+				}
+				case Instruction::func_return:
+				{
+					Value result = *sp++;
+					m_FrameCount--;
+					if (m_FrameCount == 0)
+					{
+						DEC();
+						return;
+					}
+
+					sp = frame->fp;
+					push(result);
+					frame = &m_Frames[m_FrameCount - 1];
+					break;
+				}
+				case Instruction::func_return_void:
+				{
+					m_FrameCount--;
+					if (m_FrameCount == 0)
+					{
+						DEC();
+						return;
+					}
+
+					sp = frame->fp;
+					frame = &m_Frames[m_FrameCount - 1];
+					break;
+				}
+
 				// Variables
 				case Instruction::set_global:
 				{
@@ -250,34 +368,32 @@ namespace Xias {
 				case Instruction::get_global:
 				{
 					_x_short address = READ_SHORT();
-					*sp = m_Globals[address];
-					sp++;
+					push(m_Globals[address]);
 					break;
 				}
 				case Instruction::set_local:
 				{
 					_x_short slot = READ_SHORT();
-					m_Stack[slot] = *(sp - 1);
+					frame->fp[slot] = *(sp - 1);
 					break;
 				}
 				case Instruction::get_local:
 				{
 					_x_short slot = READ_SHORT();
-					*sp = m_Stack[slot];
-					sp++;
+					push(frame->fp[slot]);
 					break;
 				}
 				
 				// Stack Usage
-				case Instruction::push_value: { *sp = bytecode.Constants[(++ip)->Data]; sp++; break; }
+				case Instruction::push_value: { *sp++ = READ_CONST(); break; }
 				case Instruction::push_size:
 				{
 					x_ulong size = READ_CONSTANT(UInt);
-					std::memcpy(sp, &bytecode.Constants[(++ip)->Data], size * sizeof(Value));
+					std::memcpy(sp, &READ_CONST(), size * sizeof(Value));
 					sp += size;
 					break;
 				}
-				case Instruction::pop_value: { sp--; }
+				case Instruction::pop_value: { DEC(); break; }
 				case Instruction::pop_size:
 				{
 					x_ulong size = READ_CONSTANT(UInt);
@@ -294,7 +410,7 @@ namespace Xias {
 				case Instruction::print_string: { std::cout << ((StringObject*)UNARY_OPERAND(Object))->Chars << std::endl; break; }
 				default: Error("Unknown instruction!"); break;
 			}
-			ip++;
+			frame->ip++;
 		}
 	}
 
@@ -303,19 +419,20 @@ namespace Xias {
 		std::cerr << msg;
 	}
 
-	void Vm::AddGlobal(std::string name, Value value)
+	inline void Vm::push(Value& value)
 	{
-		m_GlobalNames.insert({ name, m_Globals.size() });
-		m_Globals.emplace_back(value);
-	}
-
-	Value Vm::GetGlobal(std::string name)
-	{
-		auto iter = m_GlobalNames.find(name);
-		if (iter != m_GlobalNames.end())
-			return m_Globals[iter->second];
-		Error("Global not found!");
-		return Value{ 0U };
+		*sp++ = value;
 	}
 
 }
+
+#undef LEFT_OPERAND
+#undef RIGHT_OPERAND
+#undef UNARY_OPERAND
+
+#undef READ_CONSTANT
+#undef READ_CONST
+#undef READ_SHORT
+
+#undef DEC
+#undef POP
