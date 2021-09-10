@@ -1,5 +1,6 @@
 #pragma once
 
+#include "common.h"
 #include "types.h"
 #include "bytecode.h"
 
@@ -18,11 +19,14 @@ namespace Xias {
 		native_function_object,
 		void_native_function_object,
         string_object,
+		instance_object,
     };
 
     struct x_object
     {
         ObjectType Type;
+		bool IsMarked;
+		x_object* Next;
     };
 
     struct StringObject
@@ -40,7 +44,16 @@ namespace Xias {
 		StringObject* Name;
 	};
 
-	typedef Value(*NativeFn)(int argCount, Value* args);
+	struct InstanceObject
+	{
+		x_object Object;
+		x_class Class;
+		std::vector<Value> Members;
+	};
+
+	class Vm;
+
+	typedef Value(*NativeFn)(Vm* xvm, int argCount, Value* args);
 
 	struct NativeObject
 	{
@@ -48,18 +61,12 @@ namespace Xias {
 		NativeFn Function;
 	};
 
-	typedef void(*VoidNativeFn)(int argCount, Value* args);
+	typedef void(*VoidNativeFn)(Vm* xvm, int argCount, Value* args);
 
 	struct VoidNativeObject
 	{
 		x_object Object;
 		VoidNativeFn Function;
 	};
-
-	FunctionObject* NewFunction();
-	NativeObject* NewNative(NativeFn function);
-	VoidNativeObject* NewVoidNative(VoidNativeFn function);
-    StringObject* TakeString(char* chars, x_ulong length);
-    StringObject* CopyString(const char* chars, x_ulong length);
 
 }

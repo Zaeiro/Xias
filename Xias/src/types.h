@@ -2,6 +2,7 @@
 
 #include <vector>
 #include <cstdint>
+#include <unordered_map>
 
 namespace Xias {
 
@@ -13,65 +14,65 @@ namespace Xias {
 	using x_ulong = uint64_t;
 	using x_bool = bool;
 
-//	struct _x_fieldID;
-//	using x_fieldID = _x_fieldID*;
-//
-//	struct _x_methodID;
-//	using x_methodID = _x_methodID*;
-
 	struct x_object;
+	struct StringObject;
+	struct NativeObject;
+	struct VoidNativeObject;
+	struct FunctionObject;
+	struct InstanceObject;
 
-	union Value
+	using x_method = FunctionObject*;
+
+	enum class ValueType
 	{
-		x_double Double;
-		x_float Float;
-		x_long Int;
-		x_ulong UInt;
-		x_bool Bool;
-		x_object* Object;
-
-		Value() {}
-		Value(x_double _double) : Double(_double) {}
-		Value(x_float _float) : Float(_float) {}
-		Value(int _int) : Int(_int) {}
-		Value(unsigned int _uint) : UInt(_uint) {}
-		Value(x_long _int) : Int(_int) {}
-		Value(x_ulong _uint) : UInt(_uint) {}
-		Value(x_bool _bool) : Bool(_bool) {}
-		Value(x_object* _object) : Object(_object) {}
+		Double,
+		Float,
+		Int,
+		UInt,
+		Bool,
+		Object
 	};
 
-//	// Classes, structs, etc
-//	struct Type
-//	{
-//		int Size;
-//
-//		std::vector<int> MemberIndices;
-//
-//		// Non-Virtual Functions
-//		std::vector<Function> Functions;
-//	};
-//
-//	struct Function
-//	{
-//		Type ReturnType;
-//
-//		std::vector<Type> ParameterTypes;
-//	};
-//
-//	// Runtime object
-//	struct Object
-//	{
-//		std::shared_ptr<Type> Type;
-//
-//		std::vector<uint8_t> MemberVars;
-//		// Virtual Functions
-//		std::vector<Function> Functions;
-//	};
-//
-//	struct Scope
-//	{
-//		std::vector<Scope> Children;
-//	};
+	struct Value
+	{
+		union Data
+		{
+			x_double Double;
+			x_float Float;
+			x_long Int;
+			x_ulong UInt;
+			x_bool Bool;
+			x_object* Object;
+		} as;
+		ValueType Type;
+
+		Value() {}
+		Value(x_double _double) { Type = ValueType::Double; as.Double = _double; }
+		Value(x_float _float) { Type = ValueType::Float; as.Float = _float; }
+		Value(int _int) { Type = ValueType::Int; as.Int = _int; }
+		Value(unsigned int _uint) { Type = ValueType::UInt; as.UInt = _uint; }
+		Value(x_long _int) { Type = ValueType::Int; as.Int = _int; }
+		Value(x_ulong _uint) { Type = ValueType::UInt; as.UInt = _uint; }
+		Value(x_bool _bool) { Type = ValueType::Bool; as.Bool = _bool; }
+		Value(x_object* _object) { Type = ValueType::Object; as.Object = _object; }
+		Value(StringObject* _object) { Type = ValueType::Object; as.Object = (x_object*)_object; }
+		Value(NativeObject* _object) { Type = ValueType::Object; as.Object = (x_object*)_object; }
+		Value(VoidNativeObject* _object) { Type = ValueType::Object; as.Object = (x_object*)_object; }
+		Value(FunctionObject* _object) { Type = ValueType::Object; as.Object = (x_object*)_object; }
+		Value(InstanceObject* _object) { Type = ValueType::Object; as.Object = (x_object*)_object; }
+	};
+
+	struct _x_class;
+	using x_class = _x_class*;
+
+	struct _x_class
+	{
+		x_long MemberCount;
+		std::unordered_map<std::string, x_ulong> MemberIndices;
+		x_class Parent = nullptr;
+
+		std::unordered_map<std::string, x_ulong> FunctionIndices;
+		std::vector<FunctionObject*> Functions;
+	};
 
 }

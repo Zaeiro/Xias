@@ -12,6 +12,8 @@
 
 int main()
 {
+	std::cin.get();
+
 	test_vm();
 	test_lexer();
 

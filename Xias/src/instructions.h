@@ -131,6 +131,18 @@ namespace Xias {
 		set_local,
 		get_local,
 		
+		// Members of object on top of the stack
+		get_field,
+		set_field,
+
+		// Members of current object while calling a member method
+		get_member_field,
+		set_member_field,
+
+		// Object instances
+		member_method_call,
+		static_method_call,
+
 		// Stack Usage
 		push_value,
 		push_size,
