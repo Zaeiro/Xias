@@ -38,10 +38,15 @@ namespace Xias {
 
 	Vm::Vm()
 	{
+		m_FrameCount = 0;
 		m_Frames.resize(64);
 		m_Stack.resize(64);
+		m_StackSize = 64;
 		sp = m_Stack.data();
 		m_StackBack = sp;
+
+		m_BytesAllocated = 0;
+		m_NextGC = 1024 * 4;
 	}
 
 	Vm::~Vm()
@@ -414,6 +419,7 @@ namespace Xias {
 	{
 		FunctionObject* function = ALLOCATE_OBJ(FunctionObject, ObjectType::function_object);
 		function->Arity = 0;
+		function->RequiredStackSize = 0;
 		// function->Code is default initalized
 		function->Name = nullptr;
 		return function;
@@ -435,6 +441,53 @@ namespace Xias {
 
 	void Vm::CallFunction(FunctionObject* function)
 	{
+		m_StackSize += function->RequiredStackSize;
+		size_t stackCapacity = m_Stack.capacity();
+		if (m_StackSize > stackCapacity)
+		{
+			Value* oldStack = m_Stack.data();
+
+			size_t stackMax = m_Stack.max_size();
+			if (stackCapacity > stackMax / 2)
+			{
+				// Growth would overflow
+				m_Stack.reserve(m_Stack.max_size());
+#ifdef DEBUG_LOG_GC
+				printf("reached max stack size\n");
+#endif
+			}
+			else if (stackCapacity * 2 < m_StackSize)
+			{
+				// Find the next highest power of two
+				// From The Aggregate Magic Algorithms
+				// http://aggregate.org/MAGIC/
+				size_t size = m_StackSize;
+				size |= (size >> 1);
+				size |= (size >> 2);
+				size |= (size >> 4);
+				size |= (size >> 8);
+				size |= (size >> 16);
+				size |= (size >> 32);
+				m_Stack.reserve(size + 1);
+#ifdef DEBUG_LOG_GC
+				printf("resized stack from %zu to %zu\n", stackCapacity, size + 1);
+#endif
+			}
+			else
+			{
+				m_Stack.reserve(stackCapacity * 2);
+#ifdef DEBUG_LOG_GC
+				printf("doubled stack from %zu to %zu\n", stackCapacity, stackCapacity * 2);
+#endif
+			}
+
+			sp = m_Stack.data() + (sp - oldStack);
+			for (int i = 0; i < m_FrameCount; i++)
+			{
+				CallFrame* frame = &m_Frames[i];
+				frame->fp = m_Stack.data() + (frame->fp - oldStack);
+			}
+		}
 		CallFrame* newFrame = &m_Frames[m_FrameCount++];
 		newFrame->Function = function;
 		newFrame->ip = function->Code.Code.data();
@@ -467,7 +520,7 @@ namespace Xias {
 #ifdef X_DEBUG
 			if (frame->ip >= ie)
 			{
-				std::cout << "overpassed function end!\n";
+				Error("Overpassed function end!");
 			}
 #endif
 			switch (frame->ip->Op)
@@ -702,6 +755,7 @@ namespace Xias {
 					}
 
 					push(result);
+					m_StackSize -= frame->Function->RequiredStackSize;
 					frame = &m_Frames[m_FrameCount - 1];
 					break;
 				}
@@ -715,6 +769,7 @@ namespace Xias {
 						return 0;
 					}
 
+					m_StackSize -= frame->Function->RequiredStackSize;
 					frame = &m_Frames[m_FrameCount - 1];
 					break;
 				}

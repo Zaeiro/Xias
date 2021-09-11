@@ -22,6 +22,7 @@ namespace Xias {
 	struct InstanceObject;
 
 	using x_method = FunctionObject*;
+	using x_member_method = x_ulong;
 
 	enum class ValueType
 	{

@@ -25,7 +25,7 @@ namespace Xias {
 	class Vm
 	{
 		std::vector<CallFrame> m_Frames;
-		int m_FrameCount = 0;
+		int m_FrameCount;
 
 		std::unordered_set<StringObject*> m_InternedStrings;
 
@@ -34,6 +34,7 @@ namespace Xias {
 		std::vector<Value> m_Stack;
 		Value* sp = nullptr;
 		Value* m_StackBack = nullptr;
+		x_long m_StackSize;
 
 		std::unordered_map<std::string, x_ulong> m_ClassNames;
 		std::vector<x_class> m_Classes;
@@ -41,8 +42,8 @@ namespace Xias {
 		std::vector<x_object*> m_GrayStack;
 		x_object* m_Objects = nullptr;
 
-		size_t m_BytesAllocated = 0;
-		size_t m_NextGC = 1024 * 4;
+		size_t m_BytesAllocated;
+		size_t m_NextGC;
 	public:
 		Vm();
 		~Vm();
@@ -79,6 +80,31 @@ namespace Xias {
 				Error("Incorrect number of arguments provided!");
 			}
 #endif
+			push(method);
+			push({ args... });
+
+			CallFunction(method);
+			return Run();
+		}
+		template <typename... TArgs>
+		Value CallMemberMethod(x_object* object, x_member_method id, TArgs... args)
+		{
+#ifdef X_DEBUG
+			if (sp != &m_Stack[0])
+			{
+				Error("Stack pointer was not at the front!");
+			}
+			if (m_FrameCount != 0)
+			{
+				Error("There are residual stack frames!");
+			}
+			if (((InstanceObject*)(object))->Class->Functions[id]->Arity != sizeof...(args))
+			{
+				Error("Incorrect number of arguments provided!");
+			}
+#endif
+			x_method method = ((InstanceObject*)(object))->Class->Functions[id];
+
 			push(method);
 			push({ args... });
 
