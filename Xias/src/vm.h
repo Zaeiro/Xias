@@ -5,6 +5,7 @@
 #include "bytecode.h"
 #include "instructions.h"
 #include "object.h"
+#include "compilation_unit.h"
 
 #include <string>
 #include <vector>
@@ -20,6 +21,7 @@ namespace Xias {
 		FunctionObject* Function;
 		OpType* ip;
 		Value* fp;
+		std::vector<Value> Locals;
 	};
 
 	class Vm
@@ -34,7 +36,7 @@ namespace Xias {
 		std::vector<Value> m_Stack;
 		Value* sp = nullptr;
 		Value* m_StackBack = nullptr;
-		x_long m_StackSize;
+		x_ulong m_StackSize;
 
 		std::unordered_map<std::string, x_ulong> m_ClassNames;
 		std::vector<x_class> m_Classes;
@@ -42,23 +44,30 @@ namespace Xias {
 		std::vector<x_object*> m_GrayStack;
 		x_object* m_Objects = nullptr;
 
+		std::vector<x_object*> m_PinnedObjects;
+
 		size_t m_BytesAllocated;
 		size_t m_NextGC;
 	public:
 		Vm();
 		~Vm();
 		
+		bool Compile(const CompilationUnit& compilationUnit);
+
 		void RegisterFunction(const std::string&, NativeFn function);
 		void RegisterVoidFunction(const std::string&, VoidNativeFn function);
 
 		StringObject* TakeString(char* chars, x_ulong length);
 		StringObject* CopyString(const char* chars, x_ulong length);
+		StringObject* CopyString(const std::string& string);
 
 		InstanceObject* NewInstance(x_class xClass);
 
 		void AddGlobal(const std::string& name, Value& value);
 		Value GetGlobal(const std::string& name);
 		
+		x_class GetClass(const std::string& name);
+
 		void CallFunction(Bytecode& bytecode);
 
 		void CollectGarbage();
@@ -75,11 +84,12 @@ namespace Xias {
 			{
 				Error("There are residual stack frames!");
 			}
+#endif
 			if (method->Arity != sizeof...(args))
 			{
 				Error("Incorrect number of arguments provided!");
 			}
-#endif
+
 			push(method);
 			push({ args... });
 
@@ -98,11 +108,11 @@ namespace Xias {
 			{
 				Error("There are residual stack frames!");
 			}
+#endif
 			if (((InstanceObject*)(object))->Class->Functions[id]->Arity != sizeof...(args))
 			{
 				Error("Incorrect number of arguments provided!");
 			}
-#endif
 			x_method method = ((InstanceObject*)(object))->Class->Functions[id];
 
 			push(method);
@@ -113,6 +123,8 @@ namespace Xias {
 		}
 	private:
 		void Error(const char* msg);
+
+		void CompileExpression(XiasParser::ExpressionContext* expression, x_method method);
 
 		template<typename T>
 		inline T* Alloc();
@@ -134,12 +146,20 @@ namespace Xias {
 		void BlackenObject(x_object* object);
 		void MarkObject(x_object* object);
 
+		x_object* FindPinnedObject(x_object* object);
+		void PinObject(x_object* object);
+		// Avoids checking if the supplied object is already present.
+		void ForcePinObject(x_object* object);
+		void UnPinObject(x_object* object);
+
 		template<typename T>
 		T* AllocObject(ObjectType type);
 		StringObject* AllocateString(char* chars, x_ulong length);
 		FunctionObject* NewFunction();
 		NativeObject* NewNative(NativeFn function);
 		VoidNativeObject* NewVoidNative(VoidNativeFn function);
+
+		x_class AddClass(const std::string& name);
 
 		void CallFunction(FunctionObject* function);
 

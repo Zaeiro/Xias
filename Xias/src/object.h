@@ -41,6 +41,7 @@ namespace Xias {
 		x_object Object;
 		int Arity;
 		int RequiredStackSize;
+		int LocalCount;
 		Bytecode Code;
 		StringObject* Name;
 	};

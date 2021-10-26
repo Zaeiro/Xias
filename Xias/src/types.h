@@ -63,11 +63,15 @@ namespace Xias {
 		Value(InstanceObject* _object) { Type = ValueType::Object; as.Object = (x_object*)_object; }
 	};
 
+	bool operator==(const Value& lhs, const Value& rhs);
+
 	struct _x_class;
 	using x_class = _x_class*;
 
 	struct _x_class
 	{
+		std::string Name;
+
 		x_long MemberCount;
 		std::unordered_map<std::string, x_ulong> MemberIndices;
 		x_class Parent = nullptr;

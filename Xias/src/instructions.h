@@ -11,6 +11,27 @@ namespace Xias {
 	enum class Instruction : op_type
 	{
 		// Arithmetic
+		double_negate,
+		double_inc,
+		double_dec,
+		double_add,
+		double_sub,
+		double_mul,
+		double_div,
+		double_mod,
+		double_pow,
+
+		float_negate,
+		float_inc,
+		float_dec,
+		float_add,
+		float_sub,
+		float_mul,
+		float_div,
+		float_mod,
+		float_pow,
+
+		int_negate,
 		int_inc,
 		int_dec,
 		int_add,
@@ -29,37 +50,13 @@ namespace Xias {
 		uint_mod,
 		uint_pow,
 
-		double_inc,
-		double_dec,
-		double_add,
-		double_sub,
-		double_mul,
-		double_div,
-		double_mod,
-		double_pow,
+		bool_negate,
 
-		float_inc,
-		float_dec,
-		float_add,
-		float_sub,
-		float_mul,
-		float_div,
-		float_mod,
-		float_pow,
-		
 		// String operations
 		string_add,
 		string_size,
 		
 		// Casting
-		int_from_uint,
-		int_from_double,
-		int_from_float,
-		
-		uint_from_int,
-		uint_from_double,
-		uint_from_float,
-		
 		double_from_int,
 		double_from_uint,
 		double_from_float,
@@ -67,6 +64,14 @@ namespace Xias {
 		float_from_int,
 		float_from_uint,
 		float_from_double,
+		
+		int_from_uint,
+		int_from_double,
+		int_from_float,
+		
+		uint_from_int,
+		uint_from_double,
+		uint_from_float,
 		
 		// Unimplemented
 		string_from_int,
@@ -82,20 +87,6 @@ namespace Xias {
 		bool_from_string,
 		
 		// Comparisons
-		int_equal,
-		int_not_equal,
-		int_greater,
-		int_less,
-		int_greater_or_equal,
-		int_less_or_equal,
-		
-		uint_equal,
-		uint_not_equal,
-		uint_greater,
-		uint_less,
-		uint_greater_or_equal,
-		uint_less_or_equal,
-		
 		double_equal,
 		double_not_equal,
 		double_greater,
@@ -110,6 +101,23 @@ namespace Xias {
 		float_greater_or_equal,
 		float_less_or_equal,
 		
+		int_equal,
+		int_not_equal,
+		int_greater,
+		int_less,
+		int_greater_or_equal,
+		int_less_or_equal,
+		
+		uint_equal,
+		uint_not_equal,
+		uint_greater,
+		uint_less,
+		uint_greater_or_equal,
+		uint_less_or_equal,
+		
+		bool_equal,
+		bool_not_equal,
+
 		string_equal,
 		string_not_equal,
 		
@@ -143,6 +151,8 @@ namespace Xias {
 		member_method_call,
 		static_method_call,
 
+		create_instance,
+
 		// Stack Usage
 		push_value,
 		push_size,
@@ -150,11 +160,16 @@ namespace Xias {
 		pop_value,
 		pop_size,
 		
+		// Literals
+		literal_true,
+		literal_false,
+		literal_nullptr,
+
 		// Printing
-		print_int,
-		print_uint,
 		print_double,
 		print_float,
+		print_int,
+		print_uint,
 		print_bool,
 		print_string,
 	};

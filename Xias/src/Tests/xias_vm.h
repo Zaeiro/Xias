@@ -42,6 +42,12 @@ inline void test_vm()
 	bytecode.Code.emplace_back(1); // Global index
 	bytecode.Code.emplace_back(Xias::Instruction::func_call);
 	bytecode.Code.emplace_back(0); // Parameter count
+	bytecode.Code.emplace_back(Xias::Instruction::bool_from_string);
+	bytecode.Code.emplace_back(Xias::Instruction::print_bool);
+	bytecode.Code.emplace_back(Xias::Instruction::get_global);
+	bytecode.Code.emplace_back(0); // Global index
+	bytecode.Code.emplace_back(Xias::Instruction::func_call);
+	bytecode.Code.emplace_back(0); // Parameter count
 
 	bytecode.Constants.emplace_back(3.0f);
 	//bytecode.Constants.emplace_back(xvm.CopyString("apple", 5));

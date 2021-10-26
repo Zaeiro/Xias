@@ -3,6 +3,7 @@
 #include "types.h"
 #include "object.h"
 #include "memory.h"
+#include "compilation_unit.h"
 
 #include <iostream>
 
@@ -47,11 +48,54 @@ namespace Xias {
 
 		m_BytesAllocated = 0;
 		m_NextGC = 1024 * 4;
+
+		AddClass("Double");
+		AddClass("Float");
+		AddClass("Int");
+		AddClass("UInt");
+		AddClass("Bool");
+		AddClass("Object");
+		AddClass("String");
 	}
 
 	Vm::~Vm()
 	{
 		FreeObjects();
+	}
+
+	bool Vm::Compile(const CompilationUnit& compilationUnit)
+	{
+		//for (const ClassInfo& cInfo : compilationUnit.m_Classes)
+		//{
+		//	x_class xClass = AddClass(cInfo.m_QualifiedName);
+		//	xClass->MemberCount = cInfo.m_Fields.size();
+
+		//	FunctionObject* defaultInit = NewFunction();
+		//	ForcePinObject((x_object*)defaultInit);
+
+		//	for (const FieldInfo& fInfo : cInfo.m_Fields)
+		//	{
+		//		xClass->MemberIndices.emplace(fInfo.m_Name, xClass->MemberIndices.size());
+		//		if (fInfo.m_Context)
+		//		{
+		//			auto expr = fInfo.m_Context->expression();
+		//			if (expr)
+		//				CompileExpression(expr, defaultInit);
+		//			// TODO : else -> array initializer
+		//		}
+		//	}
+
+		//	// Default constructor
+		//	if (cInfo.m_Constructors.empty())
+		//	{
+
+		//	}
+
+
+		//	UnPinObject((x_object*)defaultInit);
+		//}
+
+		return false;
 	}
 
 	void Vm::RegisterFunction(const std::string& name, NativeFn function)
@@ -91,6 +135,18 @@ namespace Xias {
 		return AllocateString(heapChars, length);
 	}
 
+	StringObject* Vm::CopyString(const std::string& string)
+	{
+		size_t length = string.size();
+		StringObject* interned = FindInternedString(string.c_str(), length);
+		if (interned) return interned;
+
+		char* heapChars = AllocArray<char>(length + 1);
+		memcpy(heapChars, string.c_str(), length);
+		heapChars[length] = '\0';
+		return AllocateString(heapChars, length);
+	}
+
 	InstanceObject* Vm::NewInstance(x_class xClass)
 	{
 		InstanceObject* native = ALLOCATE_OBJ(InstanceObject, ObjectType::instance_object);
@@ -112,6 +168,14 @@ namespace Xias {
 			return m_Globals[iter->second];
 		Error("Global not found!");
 		return Value{ 0U };
+	}
+
+	x_class Vm::GetClass(const std::string& name)
+	{
+		auto iter = m_ClassNames.find(name);
+		if (iter != m_ClassNames.end())
+			return m_Classes[iter->second];
+		return nullptr;
 	}
 
 	void Vm::CallFunction(Bytecode& bytecode)
@@ -162,6 +226,11 @@ namespace Xias {
 			x_object* next = obj->Next;
 			FreeObject(obj);
 			obj = next;
+		}
+
+		for (x_class xClass : m_Classes)
+		{
+			delete xClass;
 		}
 	}
 
@@ -216,6 +285,11 @@ namespace Xias {
 		std::cerr << msg << std::endl;
 	}
 
+	void Vm::CompileExpression(XiasParser::ExpressionContext* expression, x_method method)
+	{
+
+	}
+
 	StringObject* Vm::FindInternedString(const char* chars, x_ulong length)
 	{
 		for (StringObject* string : m_InternedStrings)
@@ -249,6 +323,11 @@ namespace Xias {
 			{
 				MarkObject((x_object*)function);
 			}
+		}
+
+		for (x_object* object : m_PinnedObjects)
+		{
+			MarkObject(object);
 		}
 	}
 
@@ -356,15 +435,42 @@ namespace Xias {
 #endif
 	}
 
+	x_object* Vm::FindPinnedObject(x_object* object)
+	{
+		x_object* value;
+		auto iter = std::find(m_PinnedObjects.rbegin(), m_PinnedObjects.rend(), object);
+		if (iter != m_PinnedObjects.rend())
+			value = *iter;
+		else
+			value = nullptr;
+		return value;
+	}
+
+	void Vm::PinObject(x_object* object)
+	{
+		if (!FindPinnedObject(object))
+			ForcePinObject(object);
+	}
+
+	void Vm::ForcePinObject(x_object* object)
+	{
+		m_PinnedObjects.emplace_back(object);
+	}
+
+	void Vm::UnPinObject(x_object* object)
+	{
+		std::remove(m_PinnedObjects.rbegin(), m_PinnedObjects.rend(), object);
+	}
+
 	template<typename T>
 	inline T* Vm::Alloc()
 	{
-		m_BytesAllocated += sizeof(T);
 #ifdef DEBUG_STRESS_GC
 		CollectGarbage();
 #else
-		if (m_BytesAllocated > m_NextGC) { CollectGarbage(); }
+		if (m_BytesAllocated + sizeof(T) > m_NextGC) { CollectGarbage(); }
 #endif
+		m_BytesAllocated += sizeof(T);
 		return new T();
 	}
 
@@ -421,6 +527,7 @@ namespace Xias {
 		function->Arity = 0;
 		function->RequiredStackSize = 0;
 		// function->Code is default initalized
+		function->LocalCount = 0;
 		function->Name = nullptr;
 		return function;
 	}
@@ -437,6 +544,15 @@ namespace Xias {
 		VoidNativeObject* native = ALLOCATE_OBJ(VoidNativeObject, ObjectType::void_native_function_object);
 		native->Function = function;
 		return native;
+	}
+
+	x_class Vm::AddClass(const std::string& name)
+	{
+		x_class xClass = new _x_class();
+		m_ClassNames.emplace(name, m_Classes.size());
+		xClass = m_Classes.emplace_back(xClass);
+		xClass->Name = name;
+		return xClass;
 	}
 
 	void Vm::CallFunction(FunctionObject* function)
@@ -492,6 +608,7 @@ namespace Xias {
 		newFrame->Function = function;
 		newFrame->ip = function->Code.Code.data();
 		newFrame->fp = sp - function->Arity - 1;
+		newFrame->Locals.reserve(function->LocalCount);
 	}
 
 	inline void Vm::push(Value& value)
@@ -526,6 +643,45 @@ namespace Xias {
 			switch (frame->ip->Op)
 			{
 				// Arithmetic
+				case Instruction::double_negate: { UNARY_OPERAND(Double) = -UNARY_OPERAND(Double); break; }
+				case Instruction::double_inc: { UNARY_OPERAND(Double)++; break; }
+				case Instruction::double_dec: { UNARY_OPERAND(Double)--; break; }
+				case Instruction::double_add: { LEFT_OPERAND(Double) += RIGHT_OPERAND(Double); DEC(); break; }
+				case Instruction::double_sub: { LEFT_OPERAND(Double) -= RIGHT_OPERAND(Double); DEC(); break; }
+				case Instruction::double_mul: { LEFT_OPERAND(Double) *= RIGHT_OPERAND(Double); DEC(); break; }
+				case Instruction::double_div: { LEFT_OPERAND(Double) /= RIGHT_OPERAND(Double); DEC(); break; }
+				case Instruction::double_mod:
+				{
+					LEFT_OPERAND(Double) = (x_double)std::fmod(LEFT_OPERAND(Double), RIGHT_OPERAND(Double));
+					DEC();
+					break;
+				}
+				case Instruction::double_pow:
+				{
+					LEFT_OPERAND(Double) = (x_double)std::pow(LEFT_OPERAND(Double), RIGHT_OPERAND(Double));
+					DEC();
+					break;
+				}
+				case Instruction::float_negate: { UNARY_OPERAND(Float) = -UNARY_OPERAND(Float); break; }
+				case Instruction::float_inc: { UNARY_OPERAND(Float)++; break; }
+				case Instruction::float_dec: { UNARY_OPERAND(Float)--; break; }
+				case Instruction::float_add: { LEFT_OPERAND(Float) += RIGHT_OPERAND(Float); DEC(); break; }
+				case Instruction::float_sub: { LEFT_OPERAND(Float) -= RIGHT_OPERAND(Float); DEC(); break; }
+				case Instruction::float_mul: { LEFT_OPERAND(Float) *= RIGHT_OPERAND(Float); DEC(); break; }
+				case Instruction::float_div: { LEFT_OPERAND(Float) /= RIGHT_OPERAND(Float); DEC(); break; }
+				case Instruction::float_mod:
+				{
+					LEFT_OPERAND(Float) = (x_float)std::fmod(LEFT_OPERAND(Float), RIGHT_OPERAND(Float));
+					DEC();
+					break;
+				}
+				case Instruction::float_pow:
+				{
+					LEFT_OPERAND(Float) = (x_float)std::powf(LEFT_OPERAND(Float), RIGHT_OPERAND(Float));
+					DEC();
+					break;
+				}
+				case Instruction::int_negate: { UNARY_OPERAND(Int) = -UNARY_OPERAND(Int); break; }
 				case Instruction::int_inc: { UNARY_OPERAND(Int)++; break; }
 				case Instruction::int_dec: { UNARY_OPERAND(Int)--; break; }
 				case Instruction::int_add: { LEFT_OPERAND(Int) += RIGHT_OPERAND(Int); DEC(); break; }
@@ -552,42 +708,7 @@ namespace Xias {
 					DEC();
 					break;
 				}
-				case Instruction::double_inc: { UNARY_OPERAND(Double)++; break; }
-				case Instruction::double_dec: { UNARY_OPERAND(Double)--; break; }
-				case Instruction::double_add: { LEFT_OPERAND(Double) += RIGHT_OPERAND(Double); DEC(); break; }
-				case Instruction::double_sub: { LEFT_OPERAND(Double) -= RIGHT_OPERAND(Double); DEC(); break; }
-				case Instruction::double_mul: { LEFT_OPERAND(Double) *= RIGHT_OPERAND(Double); DEC(); break; }
-				case Instruction::double_div: { LEFT_OPERAND(Double) /= RIGHT_OPERAND(Double); DEC(); break; }
-				case Instruction::double_mod:
-				{
-					LEFT_OPERAND(Double) = (x_double)std::fmod(LEFT_OPERAND(Double), RIGHT_OPERAND(Double));
-					DEC();
-					break;
-				}
-				case Instruction::double_pow:
-				{
-					LEFT_OPERAND(Double) = (x_double)std::pow(LEFT_OPERAND(Double), RIGHT_OPERAND(Double));
-					DEC();
-					break;
-				}
-				case Instruction::float_inc: { UNARY_OPERAND(Float)++; break; }
-				case Instruction::float_dec: { UNARY_OPERAND(Float)--; break; }
-				case Instruction::float_add: { LEFT_OPERAND(Float) += RIGHT_OPERAND(Float); DEC(); break; }
-				case Instruction::float_sub: { LEFT_OPERAND(Float) -= RIGHT_OPERAND(Float); DEC(); break; }
-				case Instruction::float_mul: { LEFT_OPERAND(Float) *= RIGHT_OPERAND(Float); DEC(); break; }
-				case Instruction::float_div: { LEFT_OPERAND(Float) /= RIGHT_OPERAND(Float); DEC(); break; }
-				case Instruction::float_mod:
-				{
-					LEFT_OPERAND(Float) = (x_float)std::fmod(LEFT_OPERAND(Float), RIGHT_OPERAND(Float));
-					DEC();
-					break;
-				}
-				case Instruction::float_pow:
-				{
-					LEFT_OPERAND(Float) = (x_float)std::powf(LEFT_OPERAND(Float), RIGHT_OPERAND(Float));
-					DEC();
-					break;
-				}
+				case Instruction::bool_negate: { UNARY_OPERAND(Bool) = !UNARY_OPERAND(Bool); break; }
 
 				// String operations
 				case Instruction::string_add:
@@ -607,48 +728,109 @@ namespace Xias {
 				{
 					StringObject* string = ((StringObject*)UNARY_OPERAND(Object));
 					UNARY_OPERAND(UInt) = string->Size;
+					(sp - 1)->Type = ValueType::UInt;
 					break;
 				}
 
 				// Casting
-				case Instruction::int_from_uint: { UNARY_OPERAND(Int) = (x_long)UNARY_OPERAND(UInt); break; }
-				case Instruction::int_from_double: { UNARY_OPERAND(Int) = (x_long)UNARY_OPERAND(Double); break; }
-				case Instruction::int_from_float: { UNARY_OPERAND(Int) = (x_long)UNARY_OPERAND(Float); break; }
-				case Instruction::uint_from_int: { UNARY_OPERAND(UInt) = (x_ulong)UNARY_OPERAND(Int); break; }
-				case Instruction::uint_from_double: { UNARY_OPERAND(UInt) = (x_ulong)UNARY_OPERAND(Double); break; }
-				case Instruction::uint_from_float: { UNARY_OPERAND(UInt) = (x_ulong)UNARY_OPERAND(Float); break; }
+#ifdef COMPLETE_TYPING
+				case Instruction::double_from_int: { UNARY_OPERAND(Double) = (x_double)UNARY_OPERAND(Int); (sp - 1)->Type = ValueType::Double; break; }
+				case Instruction::double_from_uint: { UNARY_OPERAND(Double) = (x_double)UNARY_OPERAND(UInt); (sp - 1)->Type = ValueType::Double; break; }
+				case Instruction::double_from_float: { UNARY_OPERAND(Double) = (x_double)UNARY_OPERAND(Float); (sp - 1)->Type = ValueType::Double; break; }
+				case Instruction::float_from_int: { UNARY_OPERAND(Float) = (x_float)UNARY_OPERAND(Int); (sp - 1)->Type = ValueType::Float; break; }
+				case Instruction::float_from_uint: { UNARY_OPERAND(Float) = (x_float)UNARY_OPERAND(UInt); (sp - 1)->Type = ValueType::Float; break; }
+				case Instruction::float_from_double: { UNARY_OPERAND(Float) = (x_float)UNARY_OPERAND(Double); (sp - 1)->Type = ValueType::Float; break; }
+				case Instruction::int_from_uint: { UNARY_OPERAND(Int) = (x_long)UNARY_OPERAND(UInt); (sp - 1)->Type = ValueType::Int; break; }
+				case Instruction::int_from_double: { UNARY_OPERAND(Int) = (x_long)UNARY_OPERAND(Double); (sp - 1)->Type = ValueType::Int; break; }
+				case Instruction::int_from_float: { UNARY_OPERAND(Int) = (x_long)UNARY_OPERAND(Float); (sp - 1)->Type = ValueType::Int; break; }
+				case Instruction::uint_from_int: { UNARY_OPERAND(UInt) = (x_ulong)UNARY_OPERAND(Int); (sp - 1)->Type = ValueType::UInt; break; }
+				case Instruction::uint_from_double: { UNARY_OPERAND(UInt) = (x_ulong)UNARY_OPERAND(Double); (sp - 1)->Type = ValueType::UInt; break; }
+				case Instruction::uint_from_float: { UNARY_OPERAND(UInt) = (x_ulong)UNARY_OPERAND(Float); (sp - 1)->Type = ValueType::UInt; break; }
+#else
 				case Instruction::double_from_int: { UNARY_OPERAND(Double) = (x_double)UNARY_OPERAND(Int); break; }
 				case Instruction::double_from_uint: { UNARY_OPERAND(Double) = (x_double)UNARY_OPERAND(UInt); break; }
 				case Instruction::double_from_float: { UNARY_OPERAND(Double) = (x_double)UNARY_OPERAND(Float); break; }
 				case Instruction::float_from_int: { UNARY_OPERAND(Float) = (x_float)UNARY_OPERAND(Int); break; }
 				case Instruction::float_from_uint: { UNARY_OPERAND(Float) = (x_float)UNARY_OPERAND(UInt); break; }
 				case Instruction::float_from_double: { UNARY_OPERAND(Float) = (x_float)UNARY_OPERAND(Double); break; }
-
+				case Instruction::int_from_uint: { UNARY_OPERAND(Int) = (x_long)UNARY_OPERAND(UInt); break; }
+				case Instruction::int_from_double: { UNARY_OPERAND(Int) = (x_long)UNARY_OPERAND(Double); break; }
+				case Instruction::int_from_float: { UNARY_OPERAND(Int) = (x_long)UNARY_OPERAND(Float); break; }
+				case Instruction::uint_from_int: { UNARY_OPERAND(UInt) = (x_ulong)UNARY_OPERAND(Int); break; }
+				case Instruction::uint_from_double: { UNARY_OPERAND(UInt) = (x_ulong)UNARY_OPERAND(Double); break; }
+				case Instruction::uint_from_float: { UNARY_OPERAND(UInt) = (x_ulong)UNARY_OPERAND(Float); break; }
+#endif
 				// Trueness testing
-				case Instruction::bool_from_int: { UNARY_OPERAND(Bool) = UNARY_OPERAND(Int) == true; break; }
-				case Instruction::bool_from_uint: { UNARY_OPERAND(Bool) = UNARY_OPERAND(UInt) == true; break; }
+#ifdef COMPLETE_TYPING
+				case Instruction::bool_from_double: { UNARY_OPERAND(Bool) = UNARY_OPERAND(Double) == true; (sp - 1)->Type = ValueType::Bool; break; }
+				case Instruction::bool_from_float: { UNARY_OPERAND(Bool) = UNARY_OPERAND(Float) == true; (sp - 1)->Type = ValueType::Bool; break; }
+				case Instruction::bool_from_int: { UNARY_OPERAND(Bool) = UNARY_OPERAND(Int) == true; (sp - 1)->Type = ValueType::Bool; break; }
+				case Instruction::bool_from_uint: { UNARY_OPERAND(Bool) = UNARY_OPERAND(UInt) == true; (sp - 1)->Type = ValueType::Bool; break; }
+#else
 				case Instruction::bool_from_double: { UNARY_OPERAND(Bool) = UNARY_OPERAND(Double) == true; break; }
 				case Instruction::bool_from_float: { UNARY_OPERAND(Bool) = UNARY_OPERAND(Float) == true; break; }
+				case Instruction::bool_from_int: { UNARY_OPERAND(Bool) = UNARY_OPERAND(Int) == true; break; }
+				case Instruction::bool_from_uint: { UNARY_OPERAND(Bool) = UNARY_OPERAND(UInt) == true; break; }
+#endif
 				case Instruction::bool_from_string:
 				{
 					StringObject* string = (StringObject*)UNARY_OPERAND(Object);
 					UNARY_OPERAND(Bool) = string->Size > 0;
+					(sp - 1)->Type = ValueType::Bool;
 					break;
 				}
 
 				// Comparisons
-				case Instruction::int_equal: { LEFT_OPERAND(Bool) = (LEFT_OPERAND(Int) == RIGHT_OPERAND(Int)); DEC(); break; }
-				case Instruction::int_not_equal: { LEFT_OPERAND(Bool) = (LEFT_OPERAND(Int) != RIGHT_OPERAND(Int)); DEC(); break; }
-				case Instruction::int_greater: { LEFT_OPERAND(Bool) = (LEFT_OPERAND(Int) > RIGHT_OPERAND(Int)); DEC(); break; }
-				case Instruction::int_less: { LEFT_OPERAND(Bool) = (LEFT_OPERAND(Int) < RIGHT_OPERAND(Int)); DEC(); break; }
-				case Instruction::int_greater_or_equal: { LEFT_OPERAND(Bool) = (LEFT_OPERAND(Int) >= RIGHT_OPERAND(Int)); DEC(); break; }
-				case Instruction::int_less_or_equal: { LEFT_OPERAND(Bool) = (LEFT_OPERAND(Int) <= RIGHT_OPERAND(Int)); DEC(); break; }
-				case Instruction::uint_equal: { LEFT_OPERAND(Bool) = (LEFT_OPERAND(UInt) == RIGHT_OPERAND(UInt)); DEC(); break; }
-				case Instruction::uint_not_equal: { LEFT_OPERAND(Bool) = (LEFT_OPERAND(UInt) != RIGHT_OPERAND(UInt)); DEC(); break; }
-				case Instruction::uint_greater: { LEFT_OPERAND(Bool) = (LEFT_OPERAND(UInt) > RIGHT_OPERAND(UInt)); DEC(); break; }
-				case Instruction::uint_less: { LEFT_OPERAND(Bool) = (LEFT_OPERAND(UInt) < RIGHT_OPERAND(UInt)); DEC(); break; }
-				case Instruction::uint_greater_or_equal: { LEFT_OPERAND(Bool) = (LEFT_OPERAND(UInt) >= RIGHT_OPERAND(UInt)); DEC(); break; }
-				case Instruction::uint_less_or_equal: { LEFT_OPERAND(Bool) = (LEFT_OPERAND(UInt) <= RIGHT_OPERAND(UInt)); DEC(); break; }
+#ifdef COMPLETE_TYPING
+				case Instruction::double_equal: { LEFT_OPERAND(Bool) = (LEFT_OPERAND(Double) == RIGHT_OPERAND(Double)); DEC();
+					(sp - 1)->Type = ValueType::Bool; break; }
+				case Instruction::double_not_equal: { LEFT_OPERAND(Bool) = (LEFT_OPERAND(Double) != RIGHT_OPERAND(Double)); DEC();
+					(sp - 1)->Type = ValueType::Bool; break; }
+				case Instruction::double_greater: { LEFT_OPERAND(Bool) = (LEFT_OPERAND(Double) > RIGHT_OPERAND(Double)); DEC();
+					(sp - 1)->Type = ValueType::Bool; break; }
+				case Instruction::double_less: { LEFT_OPERAND(Bool) = (LEFT_OPERAND(Double) < RIGHT_OPERAND(Double)); DEC();
+					(sp - 1)->Type = ValueType::Bool; break; }
+				case Instruction::double_greater_or_equal: { LEFT_OPERAND(Bool) = (LEFT_OPERAND(Double) >= RIGHT_OPERAND(Double)); DEC();
+					(sp - 1)->Type = ValueType::Bool; break; }
+				case Instruction::double_less_or_equal: { LEFT_OPERAND(Bool) = (LEFT_OPERAND(Double) <= RIGHT_OPERAND(Double)); DEC();
+					(sp - 1)->Type = ValueType::Bool; break; }
+				case Instruction::float_equal: { LEFT_OPERAND(Bool) = (LEFT_OPERAND(Float) == RIGHT_OPERAND(Float)); DEC();
+					(sp - 1)->Type = ValueType::Bool; break; }
+				case Instruction::float_not_equal: { LEFT_OPERAND(Bool) = (LEFT_OPERAND(Float) != RIGHT_OPERAND(Float)); DEC();
+					(sp - 1)->Type = ValueType::Bool; break; }
+				case Instruction::float_greater: { LEFT_OPERAND(Bool) = (LEFT_OPERAND(Float) > RIGHT_OPERAND(Float)); DEC();
+					(sp - 1)->Type = ValueType::Bool; break; }
+				case Instruction::float_less: { LEFT_OPERAND(Bool) = (LEFT_OPERAND(Float) < RIGHT_OPERAND(Float)); DEC();
+					(sp - 1)->Type = ValueType::Bool; break; }
+				case Instruction::float_greater_or_equal: { LEFT_OPERAND(Bool) = (LEFT_OPERAND(Float) >= RIGHT_OPERAND(Float)); DEC();
+					(sp - 1)->Type = ValueType::Bool; break; }
+				case Instruction::float_less_or_equal: { LEFT_OPERAND(Bool) = (LEFT_OPERAND(Float) <= RIGHT_OPERAND(Float)); DEC();
+					(sp - 1)->Type = ValueType::Bool; break; }
+				case Instruction::int_equal: { LEFT_OPERAND(Bool) = (LEFT_OPERAND(Int) == RIGHT_OPERAND(Int)); DEC();
+					(sp - 1)->Type = ValueType::Bool; break; }
+				case Instruction::int_not_equal: { LEFT_OPERAND(Bool) = (LEFT_OPERAND(Int) != RIGHT_OPERAND(Int)); DEC();
+					(sp - 1)->Type = ValueType::Bool; break; }
+				case Instruction::int_greater: { LEFT_OPERAND(Bool) = (LEFT_OPERAND(Int) > RIGHT_OPERAND(Int)); DEC();
+					(sp - 1)->Type = ValueType::Bool; break; }
+				case Instruction::int_less: { LEFT_OPERAND(Bool) = (LEFT_OPERAND(Int) < RIGHT_OPERAND(Int)); DEC();
+					(sp - 1)->Type = ValueType::Bool; break; }
+				case Instruction::int_greater_or_equal: { LEFT_OPERAND(Bool) = (LEFT_OPERAND(Int) >= RIGHT_OPERAND(Int)); DEC();
+					(sp - 1)->Type = ValueType::Bool; break; }
+				case Instruction::int_less_or_equal: { LEFT_OPERAND(Bool) = (LEFT_OPERAND(Int) <= RIGHT_OPERAND(Int)); DEC();
+					(sp - 1)->Type = ValueType::Bool; break; }
+				case Instruction::uint_equal: { LEFT_OPERAND(Bool) = (LEFT_OPERAND(UInt) == RIGHT_OPERAND(UInt)); DEC();
+					(sp - 1)->Type = ValueType::Bool; break; }
+				case Instruction::uint_not_equal: { LEFT_OPERAND(Bool) = (LEFT_OPERAND(UInt) != RIGHT_OPERAND(UInt)); DEC();
+					(sp - 1)->Type = ValueType::Bool; break; }
+				case Instruction::uint_greater: { LEFT_OPERAND(Bool) = (LEFT_OPERAND(UInt) > RIGHT_OPERAND(UInt)); DEC();
+					(sp - 1)->Type = ValueType::Bool; break; }
+				case Instruction::uint_less: { LEFT_OPERAND(Bool) = (LEFT_OPERAND(UInt) < RIGHT_OPERAND(UInt)); DEC();
+					(sp - 1)->Type = ValueType::Bool; break; }
+				case Instruction::uint_greater_or_equal: { LEFT_OPERAND(Bool) = (LEFT_OPERAND(UInt) >= RIGHT_OPERAND(UInt)); DEC();
+					(sp - 1)->Type = ValueType::Bool; break; }
+				case Instruction::uint_less_or_equal: { LEFT_OPERAND(Bool) = (LEFT_OPERAND(UInt) <= RIGHT_OPERAND(UInt)); DEC();
+					(sp - 1)->Type = ValueType::Bool; break; }
+#else
 				case Instruction::double_equal: { LEFT_OPERAND(Bool) = (LEFT_OPERAND(Double) == RIGHT_OPERAND(Double)); DEC(); break; }
 				case Instruction::double_not_equal: { LEFT_OPERAND(Bool) = (LEFT_OPERAND(Double) != RIGHT_OPERAND(Double)); DEC(); break; }
 				case Instruction::double_greater: { LEFT_OPERAND(Bool) = (LEFT_OPERAND(Double) > RIGHT_OPERAND(Double)); DEC(); break; }
@@ -661,12 +843,29 @@ namespace Xias {
 				case Instruction::float_less: { LEFT_OPERAND(Bool) = (LEFT_OPERAND(Float) < RIGHT_OPERAND(Float)); DEC(); break; }
 				case Instruction::float_greater_or_equal: { LEFT_OPERAND(Bool) = (LEFT_OPERAND(Float) >= RIGHT_OPERAND(Float)); DEC(); break; }
 				case Instruction::float_less_or_equal: { LEFT_OPERAND(Bool) = (LEFT_OPERAND(Float) <= RIGHT_OPERAND(Float)); DEC(); break; }
+				case Instruction::int_equal: { LEFT_OPERAND(Bool) = (LEFT_OPERAND(Int) == RIGHT_OPERAND(Int)); DEC(); break; }
+				case Instruction::int_not_equal: { LEFT_OPERAND(Bool) = (LEFT_OPERAND(Int) != RIGHT_OPERAND(Int)); DEC(); break; }
+				case Instruction::int_greater: { LEFT_OPERAND(Bool) = (LEFT_OPERAND(Int) > RIGHT_OPERAND(Int)); DEC(); break; }
+				case Instruction::int_less: { LEFT_OPERAND(Bool) = (LEFT_OPERAND(Int) < RIGHT_OPERAND(Int)); DEC(); break; }
+				case Instruction::int_greater_or_equal: { LEFT_OPERAND(Bool) = (LEFT_OPERAND(Int) >= RIGHT_OPERAND(Int)); DEC(); break; }
+				case Instruction::int_less_or_equal: { LEFT_OPERAND(Bool) = (LEFT_OPERAND(Int) <= RIGHT_OPERAND(Int)); DEC(); break; }
+				case Instruction::uint_equal: { LEFT_OPERAND(Bool) = (LEFT_OPERAND(UInt) == RIGHT_OPERAND(UInt)); DEC(); break; }
+				case Instruction::uint_not_equal: { LEFT_OPERAND(Bool) = (LEFT_OPERAND(UInt) != RIGHT_OPERAND(UInt)); DEC(); break; }
+				case Instruction::uint_greater: { LEFT_OPERAND(Bool) = (LEFT_OPERAND(UInt) > RIGHT_OPERAND(UInt)); DEC(); break; }
+				case Instruction::uint_less: { LEFT_OPERAND(Bool) = (LEFT_OPERAND(UInt) < RIGHT_OPERAND(UInt)); DEC(); break; }
+				case Instruction::uint_greater_or_equal: { LEFT_OPERAND(Bool) = (LEFT_OPERAND(UInt) >= RIGHT_OPERAND(UInt)); DEC(); break; }
+				case Instruction::uint_less_or_equal: { LEFT_OPERAND(Bool) = (LEFT_OPERAND(UInt) <= RIGHT_OPERAND(UInt)); DEC(); break; }
+#endif
+				case Instruction::bool_equal: { LEFT_OPERAND(Bool) = (LEFT_OPERAND(Bool) == RIGHT_OPERAND(Bool)); DEC(); break; }
+				case Instruction::bool_not_equal: { LEFT_OPERAND(Bool) = (LEFT_OPERAND(Bool) != RIGHT_OPERAND(Bool)); DEC(); break; }
+
 				case Instruction::string_equal:
 				{
 					StringObject* left = ((StringObject*)LEFT_OPERAND(Object));
 					StringObject* right = ((StringObject*)RIGHT_OPERAND(Object));
 					LEFT_OPERAND(Bool) = left == right;
 					DEC();
+					(sp - 1)->Type = ValueType::Bool;
 					break;
 				}
 				case Instruction::string_not_equal:
@@ -675,6 +874,7 @@ namespace Xias {
 					StringObject* right = ((StringObject*)RIGHT_OPERAND(Object));
 					LEFT_OPERAND(Bool) = left != right;
 					DEC();
+					(sp - 1)->Type = ValueType::Bool;
 					break;
 				}
 
@@ -715,31 +915,31 @@ namespace Xias {
 					Value* callable = (sp - (argCount + 1));
 					switch (OBJ_TYPE(callable))
 					{
-					case ObjectType::function_object:
-					{
-						CallFunction((FunctionObject*)(AS_OBJ(callable)));
-						frame = &m_Frames[m_FrameCount - 1];
-						break;
-					}
-					case ObjectType::native_function_object:
-					{
-						NativeObject* native = (NativeObject*)(AS_OBJ(callable));
-						sp -= argCount + 1;
-						push(native->Function(this, argCount, sp + 1));
-						break;
-					}
-					case ObjectType::void_native_function_object:
-					{
-						VoidNativeObject* native = (VoidNativeObject*)(AS_OBJ(callable));
-						native->Function(this, argCount, sp - argCount);
-						sp -= argCount + 1;
-						break;
-					}
-					default:
-					{
-						Error("Can not call supplied object.");
-						break;
-					}
+						case ObjectType::function_object:
+						{
+							CallFunction((FunctionObject*)(AS_OBJ(callable)));
+							frame = &m_Frames[m_FrameCount - 1];
+							break;
+						}
+						case ObjectType::native_function_object:
+						{
+							NativeObject* native = (NativeObject*)(AS_OBJ(callable));
+							sp -= argCount + 1;
+							push(native->Function(this, argCount, sp + 1));
+							break;
+						}
+						case ObjectType::void_native_function_object:
+						{
+							VoidNativeObject* native = (VoidNativeObject*)(AS_OBJ(callable));
+							native->Function(this, argCount, sp - argCount);
+							sp -= argCount + 1;
+							break;
+						}
+						default:
+						{
+							Error("Can not call supplied object.");
+							break;
+						}
 					}
 					break;
 				}
@@ -748,6 +948,7 @@ namespace Xias {
 					Value result = POP();
 					m_FrameCount--;
 					sp = frame->fp;
+					m_StackSize -= frame->Function->RequiredStackSize;
 					if (m_FrameCount == 0)
 					{
 						DEC();
@@ -755,7 +956,6 @@ namespace Xias {
 					}
 
 					push(result);
-					m_StackSize -= frame->Function->RequiredStackSize;
 					frame = &m_Frames[m_FrameCount - 1];
 					break;
 				}
@@ -763,13 +963,13 @@ namespace Xias {
 				{
 					m_FrameCount--;
 					sp = frame->fp;
+					m_StackSize -= frame->Function->RequiredStackSize;
 					if (m_FrameCount == 0)
 					{
 						DEC();
 						return 0;
 					}
 
-					m_StackSize -= frame->Function->RequiredStackSize;
 					frame = &m_Frames[m_FrameCount - 1];
 					break;
 				}
@@ -778,7 +978,7 @@ namespace Xias {
 				case Instruction::set_global:
 				{
 					_x_short address = READ_SHORT();
-					m_Globals[address] = *(sp - 1);
+					m_Globals[address] = POP();
 					break;
 				}
 				case Instruction::get_global:
@@ -790,7 +990,7 @@ namespace Xias {
 				case Instruction::set_local:
 				{
 					_x_short slot = READ_SHORT();
-					frame->fp[slot] = *(sp - 1);
+					frame->fp[slot] = POP();
 					break;
 				}
 				case Instruction::get_local:
@@ -803,7 +1003,7 @@ namespace Xias {
 				case Instruction::get_field:
 				{
 					InstanceObject* instance = (InstanceObject*)UNARY_OPERAND(Object);
-					*sp = instance->Members[READ_SHORT()];
+					push(instance->Members[READ_SHORT()]);
 					break;
 				}
 				case Instruction::set_field:
@@ -815,7 +1015,7 @@ namespace Xias {
 				case Instruction::get_member_field:
 				{
 					InstanceObject* instance = (InstanceObject*)AS_OBJ(frame->fp);
-					*sp = instance->Members[READ_SHORT()];
+					push(instance->Members[READ_SHORT()]);
 					break;
 				}
 				case Instruction::set_member_field:
@@ -845,9 +1045,14 @@ namespace Xias {
 					frame = &m_Frames[m_FrameCount - 1];
 					break;
 				}
+				case Instruction::create_instance:
+				{
+					_x_short classID = READ_SHORT();
+					push(Value{ NewInstance(m_Classes[classID]) });
+				}
 
 				// Stack Usage
-				case Instruction::push_value: { *sp++ = READ_CONST(); break; }
+				case Instruction::push_value: { push(READ_CONST()); break; }
 				case Instruction::push_size:
 				{
 					x_ulong size = READ_CONSTANT(UInt);
@@ -863,6 +1068,10 @@ namespace Xias {
 					break;
 				}
 
+				case Instruction::literal_true: push(Value{ true }); break;
+				case Instruction::literal_false: push(Value{ false }); break;
+				case Instruction::literal_nullptr: push(Value{ (x_object*)nullptr }); break;
+
 				// Printing
 				case Instruction::print_int: { std::cout << UNARY_OPERAND(Int) << std::endl; break; }
 				case Instruction::print_uint: { std::cout << UNARY_OPERAND(UInt) << std::endl; break; }
@@ -877,7 +1086,6 @@ namespace Xias {
 
 		return Value(0);
 	}
-
 }
 
 #undef LEFT_OPERAND
