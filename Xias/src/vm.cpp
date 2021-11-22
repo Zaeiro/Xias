@@ -4,6 +4,7 @@
 #include "object.h"
 #include "memory.h"
 #include "compilation_unit.h"
+#include "compiler.h"
 
 #include <iostream>
 
@@ -65,35 +66,15 @@ namespace Xias {
 
 	bool Vm::Compile(const CompilationUnit& compilationUnit)
 	{
-		//for (const ClassInfo& cInfo : compilationUnit.m_Classes)
-		//{
-		//	x_class xClass = AddClass(cInfo.m_QualifiedName);
-		//	xClass->MemberCount = cInfo.m_Fields.size();
+		for (const ClassInfo& cInfo : compilationUnit.m_Classes)
+		{
+			AddClass(cInfo.m_QualifiedName);
+		}
 
-		//	FunctionObject* defaultInit = NewFunction();
-		//	ForcePinObject((x_object*)defaultInit);
-
-		//	for (const FieldInfo& fInfo : cInfo.m_Fields)
-		//	{
-		//		xClass->MemberIndices.emplace(fInfo.m_Name, xClass->MemberIndices.size());
-		//		if (fInfo.m_Context)
-		//		{
-		//			auto expr = fInfo.m_Context->expression();
-		//			if (expr)
-		//				CompileExpression(expr, defaultInit);
-		//			// TODO : else -> array initializer
-		//		}
-		//	}
-
-		//	// Default constructor
-		//	if (cInfo.m_Constructors.empty())
-		//	{
-
-		//	}
-
-
-		//	UnPinObject((x_object*)defaultInit);
-		//}
+		for (const ClassInfo& cInfo : compilationUnit.m_Classes)
+		{
+			CompileClass(cInfo);
+		}
 
 		return false;
 	}
@@ -282,12 +263,107 @@ namespace Xias {
 
 	void Vm::Error(const char* msg)
 	{
-		std::cerr << msg << std::endl;
+		std::cerr << sp - &m_Stack[0] << " : " << msg << std::endl;
 	}
 
-	void Vm::CompileExpression(XiasParser::ExpressionContext* expression, x_method method)
+	void Vm::CompileClass(const ClassInfo& classInfo)
 	{
+		// If compilation fails, remove the class.
 
+		size_t functionCount = 0;
+		x_class xClass = GetClass(classInfo.m_QualifiedName);
+		xClass->MemberCount = classInfo.m_Fields.size();
+
+		FunctionObject* defaultInit = NewFunction();
+		ForcePinObject((x_object*)defaultInit);
+		defaultInit->Name = CopyString("<>");
+		defaultInit->Code.Code.emplace_back(Instruction::create_instance);
+		auto iter = m_ClassNames.find(classInfo.m_QualifiedName);
+		if (iter == m_ClassNames.end())
+			return;
+		defaultInit->Code.Code.emplace_back(iter->second);
+
+		for (const FieldInfo& fInfo : classInfo.m_Fields)
+		{
+			x_ulong fieldID = xClass->MemberIndices.size();
+			xClass->MemberIndices.emplace(fInfo.m_Name, fieldID);
+			CompileField(fieldID, fInfo, defaultInit);
+		}
+
+		// Default constructor
+		if (classInfo.m_Constructors.empty())
+		{
+			defaultInit->Code.Code.emplace_back(Instruction::func_return);
+			AddMethod(xClass, defaultInit);
+		}
+		else
+		{
+			for (const ConstructorInfo& mInfo : classInfo.m_Constructors)
+			{
+				FunctionObject* ctor = DuplicateFunction(defaultInit);
+				ForcePinObject((x_object*)ctor);
+				ctor->Name = CopyString(";<>;" + mInfo.m_Signature);
+				ctor->Arity = mInfo.m_Parameters.size();
+				CompileStatement(mInfo.m_Body, ctor);
+				ctor->Code.Code.emplace_back(Instruction::func_return);
+				AddMethod(xClass, ctor);
+				UnPinObject((x_object*)ctor);
+			}
+		}
+
+		for (const MethodInfo& mInfo : classInfo.m_Methods)
+		{
+			FunctionObject* method = NewFunction();
+			ForcePinObject((x_object*)method);
+			method->Name = CopyString(mInfo.m_Name);
+			method->Arity = mInfo.m_Parameters.size();
+			CompileStatement(mInfo.m_Body, method);
+			AddMethod(xClass, method);
+			UnPinObject((x_object*)method);
+		}
+
+		UnPinObject((x_object*)defaultInit);
+	}
+
+	void Vm::AddField(x_class xClass, const std::string& name)
+	{
+		xClass->MemberIndices.emplace(name, xClass->MemberIndices.size());
+	}
+
+	void Vm::AddMethod(x_class xClass, x_method method)
+	{
+		xClass->FunctionIndices.emplace(method->Name->Chars, xClass->FunctionIndices.size());
+		xClass->Functions.emplace_back(method);
+	}
+
+	void Vm::CompileField(x_ulong fieldID, const FieldInfo& fieldInfo, x_method method)
+	{
+		// TODO: Account for default initialized fields
+		if (fieldInfo.m_VariableInitializer.m_Children.size() > 0)
+			CompileExpression(fieldInfo.m_VariableInitializer, method);
+		else
+			method->Code.Code.emplace_back(Instruction::literal_nullptr);
+
+		method->Code.Code.emplace_back(Instruction::set_field);
+		method->Code.Code.emplace_back(fieldID);
+	}
+
+	x_method Vm::CompileStatement(const Statement& statement)
+	{
+		FunctionObject* method = NewFunction();
+		CompileStatement(statement, method);
+		return method;
+	}
+
+	void Vm::CompileStatement(const Statement& statement, x_method method)
+	{
+		Compiler::Compile(this, statement, method);
+	}
+
+	XType Vm::CompileExpression(const Expression& expression, x_method method)
+	{
+		Compiler::Compile(this, expression, method);
+		return XType::Instance; // ???
 	}
 
 	StringObject* Vm::FindInternedString(const char* chars, x_ulong length)
@@ -532,6 +608,17 @@ namespace Xias {
 		return function;
 	}
 
+	FunctionObject* Vm::DuplicateFunction(FunctionObject* oldFunction)
+	{
+		FunctionObject* function = NewFunction();
+		function->Arity = oldFunction->Arity;
+		function->RequiredStackSize = oldFunction->RequiredStackSize;
+		function->Code = oldFunction->Code;
+		function->LocalCount = oldFunction->LocalCount;
+		function->Name = oldFunction->Name;
+		return function;
+	}
+
 	NativeObject* Vm::NewNative(NativeFn function)
 	{
 		NativeObject* native = ALLOCATE_OBJ(NativeObject, ObjectType::native_function_object);
@@ -611,7 +698,7 @@ namespace Xias {
 		newFrame->Locals.reserve(function->LocalCount);
 	}
 
-	inline void Vm::push(Value& value)
+	void Vm::push(Value& value)
 	{
 		*sp++ = value;
 	}
@@ -695,6 +782,11 @@ namespace Xias {
 					DEC();
 					break;
 				}
+				case Instruction::int_shift_left: { LEFT_OPERAND(Int) = LEFT_OPERAND(Int) << RIGHT_OPERAND(Int); DEC(); break; }
+				case Instruction::int_shift_right: { LEFT_OPERAND(Int) = LEFT_OPERAND(Int) >> RIGHT_OPERAND(Int); DEC(); break; }
+				case Instruction::int_bit_and: { LEFT_OPERAND(Int) = LEFT_OPERAND(Int) & RIGHT_OPERAND(Int); DEC(); break; }
+				case Instruction::int_bit_or: { LEFT_OPERAND(Int) = LEFT_OPERAND(Int) | RIGHT_OPERAND(Int); DEC(); break; }
+				case Instruction::int_bit_xor: { LEFT_OPERAND(Int) = LEFT_OPERAND(Int) ^ RIGHT_OPERAND(Int); DEC(); break; }
 				case Instruction::uint_inc: { UNARY_OPERAND(UInt)++; break; }
 				case Instruction::uint_dec: { UNARY_OPERAND(UInt)--; break; }
 				case Instruction::uint_add: { LEFT_OPERAND(UInt) += RIGHT_OPERAND(UInt); DEC(); break; }
@@ -708,7 +800,15 @@ namespace Xias {
 					DEC();
 					break;
 				}
+				case Instruction::uint_shift_left: { LEFT_OPERAND(UInt) = LEFT_OPERAND(UInt) << RIGHT_OPERAND(UInt); DEC(); break; }
+				case Instruction::uint_shift_right: { LEFT_OPERAND(UInt) = LEFT_OPERAND(UInt) >> RIGHT_OPERAND(UInt); DEC(); break; }
+				case Instruction::uint_bit_and: { LEFT_OPERAND(UInt) = LEFT_OPERAND(UInt) & RIGHT_OPERAND(UInt); DEC(); break; }
+				case Instruction::uint_bit_or: { LEFT_OPERAND(UInt) = LEFT_OPERAND(UInt) | RIGHT_OPERAND(UInt); DEC(); break; }
+				case Instruction::uint_bit_xor: { LEFT_OPERAND(UInt) = LEFT_OPERAND(UInt) ^ RIGHT_OPERAND(UInt); DEC(); break; }
 				case Instruction::bool_negate: { UNARY_OPERAND(Bool) = !UNARY_OPERAND(Bool); break; }
+				case Instruction::bool_and: { LEFT_OPERAND(Bool) = LEFT_OPERAND(Bool) & RIGHT_OPERAND(Bool); break; }
+				case Instruction::bool_or: { LEFT_OPERAND(Bool) = LEFT_OPERAND(Bool) | RIGHT_OPERAND(Bool); break; }
+				case Instruction::bool_xor: { LEFT_OPERAND(Bool) = LEFT_OPERAND(Bool) ^ RIGHT_OPERAND(Bool); break; }
 
 				// String operations
 				case Instruction::string_add:
@@ -878,7 +978,25 @@ namespace Xias {
 					break;
 				}
 
+				case Instruction::bit_flip: { UNARY_OPERAND(UInt) = ~UNARY_OPERAND(UInt); break; }
+
 				// Control flow
+				case Instruction::jump_if_true:
+				{
+					_x_short offset = READ_SHORT();
+					if (UNARY_OPERAND(Bool) == true)
+						frame->ip += offset;
+					DEC();
+					break;
+				}
+				case Instruction::jump_if_true_chain:
+				{
+					_x_short offset = READ_SHORT();
+					if (UNARY_OPERAND(Bool) == true)
+						frame->ip += offset;
+					break;
+					// NOTE: Doesn't decrement the stack pointer
+				}
 				case Instruction::jump_if_false:
 				{
 					_x_short offset = READ_SHORT();
@@ -951,7 +1069,6 @@ namespace Xias {
 					m_StackSize -= frame->Function->RequiredStackSize;
 					if (m_FrameCount == 0)
 					{
-						DEC();
 						return result;
 					}
 
@@ -966,7 +1083,6 @@ namespace Xias {
 					m_StackSize -= frame->Function->RequiredStackSize;
 					if (m_FrameCount == 0)
 					{
-						DEC();
 						return 0;
 					}
 
@@ -1049,6 +1165,7 @@ namespace Xias {
 				{
 					_x_short classID = READ_SHORT();
 					push(Value{ NewInstance(m_Classes[classID]) });
+					break;
 				}
 
 				// Stack Usage
@@ -1068,6 +1185,12 @@ namespace Xias {
 					break;
 				}
 
+				case Instruction::duplicate:
+				{
+					push(*(sp - 1));
+					break;
+				}
+				
 				case Instruction::literal_true: push(Value{ true }); break;
 				case Instruction::literal_false: push(Value{ false }); break;
 				case Instruction::literal_nullptr: push(Value{ (x_object*)nullptr }); break;

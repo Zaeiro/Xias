@@ -1,6 +1,7 @@
 #include "XiasVisitor.h"
 
 #include "compilation_unit.h"
+#include "types.h"
 
 using namespace Xias;
 
@@ -116,10 +117,11 @@ antlrcpp::Any XiasVisitor::visitMethod_declaration(XiasParser::Method_declaratio
 	auto header = ctx->method_header();
 
 	MethodInfo& mInfo = cInfo->m_Methods.emplace_back();
-	mInfo.m_Name = header->member_name()->getText();
 	AddModifiers(&mInfo.m_Modifiers, header->all_modifier(), ModifierType::Field);
 	mInfo.m_Body = CreateStatement(ctx->method_body());
 	mInfo.m_Type = header->return_type()->getText();
+	mInfo.m_Name = GetTypeInitial(mInfo.m_Type);
+	mInfo.m_Name += header->member_name()->getText() + ';';
 
 	for (auto parameter : header->formal_parameter_list()->fixed_parameters()->fixed_parameter())
 	{
@@ -128,6 +130,7 @@ antlrcpp::Any XiasVisitor::visitMethod_declaration(XiasParser::Method_declaratio
 		if (auto defaultArg = parameter->default_argument())
 			pInfo.m_Default = CreateExpression(defaultArg->expression());
 		pInfo.m_Type = parameter->type_()->getText();
+		mInfo.m_Name += GetTypeInitial(pInfo.m_Type);
 	}
 
 	return antlrcpp::Any();

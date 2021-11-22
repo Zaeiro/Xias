@@ -36,6 +36,21 @@ namespace Xias {
         char* Chars = nullptr;
     };
 
+	enum class XType
+	{
+		Double,
+		Float,
+		Int,
+		UInt,
+		Bool,
+		String,
+		Instance,
+
+		Function,
+		NativeFunction,
+		VoidNativeFunction,
+	};
+
 	struct FunctionObject
 	{
 		x_object Object;

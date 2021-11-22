@@ -13,25 +13,13 @@
 #include <string>
 #include <stdio.h>
 #include <ctype.h>
+#include <chrono>
 
 int main()
 {
-	//std::vector<Xias::Token> tokens = lexer.Analyse("int myInt = 32;");
-	//Xias::Node* node = parser.Analyse(tokens);
-
-	// are we making a parser or compiler?
-	// a parser, then a compiler
-	// aight
-
-	// The vm has to handle compilation itself
-	// because of reasons
-
 	// test_lexer();
 	// test_parser();
 	// test_vm();
-
-	//std::ifstream stream;
-	//stream.open("sample.x");
 
 	std::ifstream stream;
 	stream.open("input.xs");
@@ -44,10 +32,20 @@ int main()
 
 	XiasVisitor visitor;
 	Xias::CompilationUnit unitInfo = visitor.visitCompilation_unit(tree).as<Xias::CompilationUnit>();
-	//visitor.visitCompilation_unit(tree);
-	//Xias::Vm vm;
-	//vm.ReadUnit(unitInfo);
-	//vm.ReadUnit(unitInfo2);
+	Xias::Vm vm;
+	vm.Compile(unitInfo);
+
+	Xias::x_class clas = vm.GetClass("Apple");
+	Xias::x_method method = vm.GetStaticMethod(clas, "I;VeryCoolFunction;I;");
+	std::cout << vm.CallStaticMethod(method, 1).as.Int << "\n";
+
+	//size_t acc = 0;
+	//auto begin = std::chrono::high_resolution_clock::now();
+	//for (int i = 0; i < 100000; i++)
+	//	acc += vm.CallStaticMethod(method, 1).as.Int;
+	//auto end = std::chrono::high_resolution_clock::now();
+	//std::cout << "xias code took: " << (float)std::chrono::duration_cast<std::chrono::milliseconds>(end - begin).count() / 1.0f << "ms" << std::endl;
+
 
 	std::cout << "All tests done" << std::endl;
 	std::cin.get();

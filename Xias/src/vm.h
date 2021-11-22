@@ -72,6 +72,15 @@ namespace Xias {
 
 		void CollectGarbage();
 
+		x_method GetStaticMethod(x_class xClass, std::string signature)
+		{
+			auto method = xClass->FunctionIndices.find(signature);
+			if (method != xClass->FunctionIndices.end())
+				return xClass->Functions[method->second];
+			else
+				return nullptr;
+		}
+
 		template <typename... TArgs>
 		Value CallStaticMethod(x_method method, TArgs... args)
 		{
@@ -90,8 +99,8 @@ namespace Xias {
 				Error("Incorrect number of arguments provided!");
 			}
 
-			push(method);
-			push({ args... });
+			push(Value{ (x_object*)method });
+			push({ Value{ args }... });
 
 			CallFunction(method);
 			return Run();
@@ -124,7 +133,13 @@ namespace Xias {
 	private:
 		void Error(const char* msg);
 
-		void CompileExpression(XiasParser::ExpressionContext* expression, x_method method);
+		void CompileClass(const ClassInfo& classInfo);
+		void AddField(x_class xClass, const std::string& name);
+		void AddMethod(x_class xClass, x_method method);
+		void CompileField(x_ulong fieldID, const FieldInfo& fieldInfo, x_method method);
+		x_method CompileStatement(const Statement& statement);
+		void CompileStatement(const Statement& statement, x_method method);
+		XType CompileExpression(const Expression& expression, x_method method);
 
 		template<typename T>
 		inline T* Alloc();
@@ -156,6 +171,7 @@ namespace Xias {
 		T* AllocObject(ObjectType type);
 		StringObject* AllocateString(char* chars, x_ulong length);
 		FunctionObject* NewFunction();
+		FunctionObject* DuplicateFunction(FunctionObject* oldFunction);
 		NativeObject* NewNative(NativeFn function);
 		VoidNativeObject* NewVoidNative(VoidNativeFn function);
 
@@ -163,7 +179,7 @@ namespace Xias {
 
 		void CallFunction(FunctionObject* function);
 
-		inline void push(Value& value);
+		void push(Value& value);
 
 		Value RunMethod(x_method method);
 		Value Run();

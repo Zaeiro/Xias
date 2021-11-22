@@ -80,4 +80,5 @@ namespace Xias {
 		std::vector<FunctionObject*> Functions;
 	};
 
+	std::string GetTypeInitial(const std::string& type);
 }

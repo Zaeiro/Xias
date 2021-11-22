@@ -275,6 +275,7 @@ namespace Xias {
 
 	struct ConstructorInfo
 	{
+		std::string m_Signature;
 		Modifiers m_Modifiers;
 
 		std::vector<ParameterInfo> m_Parameters;

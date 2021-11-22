@@ -807,6 +807,22 @@ primary_expression
     | array_creation_expression
     ;
 
+// primary_no_array_creation_expression
+//     : literal
+//     | simple_name
+//     | parenthesized_expression
+//     | member_access
+//     | invocation_expression
+//     | element_access
+//     | this_access
+//     | base_access
+//     | post_increment_expression
+//     | post_decrement_expression
+//     | object_creation_expression
+//     | typeof_expression
+//     | default_value_expression
+//     ;
+
 primary_no_array_creation_expression_base
     : primary_expression_start primary_no_array_creation_expression?
     ;

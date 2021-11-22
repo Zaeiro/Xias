@@ -40,6 +40,11 @@ namespace Xias {
 		int_div,
 		int_mod,
 		int_pow,
+		int_shift_left,
+		int_shift_right,
+		int_bit_and,
+		int_bit_or,
+		int_bit_xor,
 
 		uint_inc,
 		uint_dec,
@@ -49,13 +54,23 @@ namespace Xias {
 		uint_div,
 		uint_mod,
 		uint_pow,
+		uint_shift_left,
+		uint_shift_right,
+		uint_bit_and,
+		uint_bit_or,
+		uint_bit_xor,
 
 		bool_negate,
+		bool_and,
+		bool_or,
+		bool_xor,
 
 		// String operations
 		string_add,
 		string_size,
-		
+
+		bit_flip,
+
 		// Casting
 		double_from_int,
 		double_from_uint,
@@ -122,6 +137,8 @@ namespace Xias {
 		string_not_equal,
 		
 		// Control flow
+		jump_if_true,
+		jump_if_true_chain,
 		jump_if_false,
 		jump_if_false_chain,
 		jump,
@@ -160,6 +177,8 @@ namespace Xias {
 		pop_value,
 		pop_size,
 		
+		duplicate,
+
 		// Literals
 		literal_true,
 		literal_false,
