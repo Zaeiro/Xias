@@ -1,8 +1,8 @@
 #pragma once
 #include <vector>
 #include <functional>
-#include <stdio.h>
-#include <ctype.h>
+#include <cstdio>
+#include <iostream>
 
 namespace Xias {
 
@@ -26,6 +26,71 @@ namespace Xias {
 		Assignment, // =
 		Comment,
 
+	};
+
+	enum class NeoTokenType : uint8_t
+	{
+		// Single-character Tokens.
+		LeftParen, RightParen,
+		LeftBrace, RightBrace,
+		Comma, Dot, Minus, Plus,
+		Semicolon, Slash, Star,
+		Percent, Caret, Colon,
+		// One Or Two Character Tokens.
+		Bang, BangEqual,
+		Equal, EqualEqual,
+		Greater, GreaterEqual,
+		Less, LessEqual,
+		MinusEqual, PlusEqual,
+		SlashEqual, StarEqual,
+		MinusMinus, PlusPlus,
+		// Literals.
+		Identifier, String,
+		I, U, F, D,
+		// Keywords.
+		And, Class, Else, False,
+		For, If, Or, Return,
+		Super, This, Null,
+		True, While, Switch,
+		Break, Static, Virtual,
+		Override, Public, Protected,
+		Private, Namespace, New,
+		Operator, Get, Set,
+		// Type keywords.
+		Double, Float, Int,
+		UInt, Bool, Object,
+
+		TokenCount,
+	};
+
+	struct NeoToken
+	{
+		NeoTokenType type;
+		std::string value;
+		unsigned long long line = 0;
+
+		NeoToken(NeoTokenType type, std::string& value)
+		{
+			this->type = type;
+			this->value = value;
+		}
+		NeoToken(NeoTokenType type, const char* value)
+		{
+			this->type = type;
+			this->value = value;
+		}
+		NeoToken(NeoTokenType type, std::string& value, unsigned long long line)
+		{
+			this->type = type;
+			this->value = value;
+			this->line = line;
+		}
+		NeoToken(NeoTokenType type, const char* value, unsigned long long line)
+		{
+			this->type = type;
+			this->value = value;
+			this->line = line;
+		}
 	};
 
 	struct Token

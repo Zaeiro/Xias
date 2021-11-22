@@ -6,34 +6,55 @@
 #include <sstream>
 #include <cstdint>
 
+Xias::Value CFunc(Xias::Vm* xvm, int argCount, Xias::Value* args)
+{
+	std::printf("%F\n", args->as.Float);
+	return xvm->CopyString("test", 4);
+}
+
+Xias::Value CFuncB(Xias::Vm* xvm, int argCount, Xias::Value* args)
+{
+	return xvm->CopyString("anotherstring\n", 14);
+}
+
 inline void test_vm()
 {
-	std::vector<uint8_t> data;
-	data.resize(11);
-	uint8_t* pdata = data.data();
-	*pdata = (uint8_t)Xias::Instructions::push_1;
-	pdata++;
-	*((Xias::x_byte*)pdata) = (Xias::x_byte)34;
-	pdata += sizeof(Xias::x_byte);
-
-	*pdata = (uint8_t)Xias::Instructions::byte_casts;
-	pdata++;
-	*pdata = (uint8_t)Xias::InstructionVariants::_to_float;
-	pdata++;
-
-	*pdata = (uint8_t)Xias::Instructions::push_4;
-	pdata++;
-	*((float*)pdata) = 10.0f;
-	pdata += sizeof(float);
-
-	*pdata = (uint8_t)Xias::Instructions::float_s_arithmetic;
-	pdata++;
-	*pdata = (uint8_t)Xias::InstructionVariants::_div;
-	pdata++;
-
 	Xias::Vm xvm;
+	xvm.RegisterFunction("CFunc", CFunc);
 
-	xvm.Callfunction(data);
+	Xias::Bytecode bytecode;
+	bytecode.Code.emplace_back(Xias::Instruction::get_global);
+	bytecode.Code.emplace_back(0); // Global index
+	bytecode.Code.emplace_back(Xias::Instruction::push_value);
+	bytecode.Code.emplace_back(0); // Constants index
+	bytecode.Code.emplace_back(Xias::Instruction::func_call);
+	bytecode.Code.emplace_back(1); // Parameter count
+	bytecode.Code.emplace_back(Xias::Instruction::get_global);
+	bytecode.Code.emplace_back(0); // Global index
+	bytecode.Code.emplace_back(Xias::Instruction::push_value);
+	bytecode.Code.emplace_back(0); // Constants index
+	bytecode.Code.emplace_back(Xias::Instruction::func_call);
+	bytecode.Code.emplace_back(1); // Parameter count
+	bytecode.Code.emplace_back(Xias::Instruction::string_add);
+	bytecode.Code.emplace_back(Xias::Instruction::print_string);
+	bytecode.Code.emplace_back(Xias::Instruction::pop_value);
+	bytecode.Code.emplace_back(Xias::Instruction::get_global);
+	bytecode.Code.emplace_back(1); // Global index
+	bytecode.Code.emplace_back(Xias::Instruction::func_call);
+	bytecode.Code.emplace_back(0); // Parameter count
+	bytecode.Code.emplace_back(Xias::Instruction::bool_from_string);
+	bytecode.Code.emplace_back(Xias::Instruction::print_bool);
+	bytecode.Code.emplace_back(Xias::Instruction::get_global);
+	bytecode.Code.emplace_back(0); // Global index
+	bytecode.Code.emplace_back(Xias::Instruction::func_call);
+	bytecode.Code.emplace_back(0); // Parameter count
+
+	bytecode.Constants.emplace_back(3.0f);
+	//bytecode.Constants.emplace_back(xvm.CopyString("apple", 5));
+
+	xvm.RegisterFunction("CFuncB", CFuncB);
+
+	xvm.CallFunction(bytecode);
 
 	std::cin.get();
 }

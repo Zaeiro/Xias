@@ -2,60 +2,83 @@
 
 #include <vector>
 #include <cstdint>
-#include <memory>
+#include <unordered_map>
 
 namespace Xias {
 
-	using x_byte = uint8_t;
-	using x_short = int16_t;
-	using x_int = int32_t;
-	using x_long = int64_t;
-	using x_sbyte = int8_t;
-	using x_ushort = uint16_t;
-	using x_uint = uint32_t;
-	using x_ulong = uint64_t;
-	using x_float = float;
+	using _x_short = uint16_t;
+
 	using x_double = double;
+	using x_float = float;
+	using x_long = int64_t;
+	using x_ulong = uint64_t;
+	using x_bool = bool;
 
-	struct _x_fieldID;
-	using x_fieldID = _x_fieldID*;
+	struct x_object;
+	struct StringObject;
+	struct NativeObject;
+	struct VoidNativeObject;
+	struct FunctionObject;
+	struct InstanceObject;
 
-	struct _x_methodID;
-	using x_methodID = _x_methodID*;
+	using x_method = FunctionObject*;
+	using x_member_method = x_ulong;
 
-	struct Function;
-
-	// Classes, structs, etc
-	struct Type
+	enum class ValueType
 	{
-		int Size;
-
-		std::vector<int> MemberIndices;
-
-		// Non-Virtual Functions
-		std::vector<Function> Functions;
+		Double,
+		Float,
+		Int,
+		UInt,
+		Bool,
+		Object
 	};
 
-	struct Function
+	struct Value
 	{
-		Type ReturnType;
+		union Data
+		{
+			x_double Double;
+			x_float Float;
+			x_long Int;
+			x_ulong UInt;
+			x_bool Bool;
+			x_object* Object;
+		} as;
+		ValueType Type;
 
-		std::vector<Type> ParameterTypes;
+		Value() {}
+		Value(x_double _double) { Type = ValueType::Double; as.Double = _double; }
+		Value(x_float _float) { Type = ValueType::Float; as.Float = _float; }
+		Value(int _int) { Type = ValueType::Int; as.Int = _int; }
+		Value(unsigned int _uint) { Type = ValueType::UInt; as.UInt = _uint; }
+		Value(x_long _int) { Type = ValueType::Int; as.Int = _int; }
+		Value(x_ulong _uint) { Type = ValueType::UInt; as.UInt = _uint; }
+		Value(x_bool _bool) { Type = ValueType::Bool; as.Bool = _bool; }
+		Value(x_object* _object) { Type = ValueType::Object; as.Object = _object; }
+		Value(StringObject* _object) { Type = ValueType::Object; as.Object = (x_object*)_object; }
+		Value(NativeObject* _object) { Type = ValueType::Object; as.Object = (x_object*)_object; }
+		Value(VoidNativeObject* _object) { Type = ValueType::Object; as.Object = (x_object*)_object; }
+		Value(FunctionObject* _object) { Type = ValueType::Object; as.Object = (x_object*)_object; }
+		Value(InstanceObject* _object) { Type = ValueType::Object; as.Object = (x_object*)_object; }
 	};
 
-	// Runtime object
-	struct Object
-	{
-		std::shared_ptr<Type> Type;
+	bool operator==(const Value& lhs, const Value& rhs);
 
-		std::vector<uint8_t> MemberVars;
-		// Virtual Functions
-		std::vector<Function> Functions;
+	struct _x_class;
+	using x_class = _x_class*;
+
+	struct _x_class
+	{
+		std::string Name;
+
+		x_long MemberCount;
+		std::unordered_map<std::string, x_ulong> MemberIndices;
+		x_class Parent = nullptr;
+
+		std::unordered_map<std::string, x_ulong> FunctionIndices;
+		std::vector<FunctionObject*> Functions;
 	};
 
-	struct Scope
-	{
-		std::vector<Scope> Children;
-	};
-
+	std::string GetTypeInitial(const std::string& type);
 }
