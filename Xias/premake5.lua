@@ -15,7 +15,9 @@ project "Xias"
 
 	includedirs
 	{
-		"%{wks.location}/Xias/src"
+		"%{wks.location}/Xias/src",
+		"%{wks.location}/Xias/src/antlr",
+		"%{wks.location}/Xias/src/antlrgen"
 	}
 
 	filter "system:windows"
