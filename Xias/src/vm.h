@@ -87,16 +87,19 @@ namespace Xias {
 #ifdef X_DEBUG
 			if (sp != &m_Stack[0])
 			{
-				Error("Stack pointer was not at the front!");
+				Error("CallStaticMethod: Stack pointer was not at the front!");
+				return 0;
 			}
 			if (m_FrameCount != 0)
 			{
-				Error("There are residual stack frames!");
+				Error("CallStaticMethod: There are residual stack frames!");
+				return 0;
 			}
 #endif
 			if (method->Arity != sizeof...(args))
 			{
-				Error("Incorrect number of arguments provided!");
+				Error("CallStaticMethod: Incorrect number of arguments provided!");
+				return 0;
 			}
 
 			push(Value{ (x_object*)method });
@@ -111,16 +114,19 @@ namespace Xias {
 #ifdef X_DEBUG
 			if (sp != &m_Stack[0])
 			{
-				Error("Stack pointer was not at the front!");
+				Error("CallMemberMethod: Stack pointer was not at the front!");
+				return 0;
 			}
 			if (m_FrameCount != 0)
 			{
-				Error("There are residual stack frames!");
+				Error("CallMemberMethod: There are residual stack frames!");
+				return 0;
 			}
 #endif
 			if (((InstanceObject*)(object))->Class->Functions[id]->Arity != sizeof...(args))
 			{
-				Error("Incorrect number of arguments provided!");
+				Error("CallMemberMethod: Incorrect number of arguments provided!");
+				return 0;
 			}
 			x_method method = ((InstanceObject*)(object))->Class->Functions[id];
 
@@ -132,9 +138,14 @@ namespace Xias {
 		}
 	private:
 		void Error(const char* msg);
+		void Error(const std::string& msg);
+		void CompilationError(x_class xClass, const char* msg);
+		void CompilationError(x_class xClass, const std::string& msg);
 
+		void RegisterClass(const ClassInfo& classInfo);
 		void CompileClass(const ClassInfo& classInfo);
 		void AddField(x_class xClass, const std::string& name);
+		x_ulong FindField(x_class xClass, const std::string& name);
 		void AddMethod(x_class xClass, x_method method);
 		void CompileField(x_ulong fieldID, const FieldInfo& fieldInfo, x_method method);
 		x_method CompileStatement(const Statement& statement);
@@ -176,6 +187,7 @@ namespace Xias {
 		VoidNativeObject* NewVoidNative(VoidNativeFn function);
 
 		x_class AddClass(const std::string& name);
+		void RemoveClass(x_class xClass);
 
 		void CallFunction(FunctionObject* function);
 

@@ -68,7 +68,7 @@ namespace Xias {
 	{
 		for (const ClassInfo& cInfo : compilationUnit.m_Classes)
 		{
-			AddClass(cInfo.m_QualifiedName);
+			RegisterClass(cInfo);
 		}
 
 		for (const ClassInfo& cInfo : compilationUnit.m_Classes)
@@ -147,7 +147,7 @@ namespace Xias {
 		auto iter = m_GlobalNames.find(name);
 		if (iter != m_GlobalNames.end())
 			return m_Globals[iter->second];
-		Error("Global not found!");
+		Error("GetGlobal: Global not found!");
 		return Value{ 0U };
 	}
 
@@ -167,11 +167,11 @@ namespace Xias {
 #ifdef X_DEBUG
 		if (sp != &m_Stack[0])
 		{
-			Error("Stack pointer was not at the front!");
+			Error("CallFunction: Stack pointer was not at the front!");
 		}
 		if (m_FrameCount != 0)
 		{
-			Error("There are residual stack frames!");
+			Error("CallFunction: There are residual stack frames!");
 		}
 #endif
 		RunMethod(function);
@@ -209,9 +209,9 @@ namespace Xias {
 			obj = next;
 		}
 
-		for (x_class xClass : m_Classes)
+		for (const auto& pair : m_ClassNames)
 		{
-			delete xClass;
+			delete m_Classes[pair.second];
 		}
 	}
 
@@ -266,13 +266,45 @@ namespace Xias {
 		std::cerr << sp - &m_Stack[0] << " : " << msg << std::endl;
 	}
 
+	void Vm::Error(const std::string& msg)
+	{
+		std::cerr << sp - &m_Stack[0] << " : " << msg << std::endl;
+	}
+
+	void Vm::CompilationError(x_class xClass, const char* msg)
+	{
+		std::cerr << "Error compiling class \"" << xClass->Name << "\" : " << msg << std::endl;
+		RemoveClass(xClass);
+	}
+
+	void Vm::CompilationError(x_class xClass, const std::string& msg)
+	{
+		std::cerr << "Error compiling class \"" << xClass->Name << "\" : " << msg << std::endl;
+		RemoveClass(xClass);
+	}
+
+	void Vm::RegisterClass(const ClassInfo& classInfo)
+	{
+		x_class xClass = AddClass(classInfo.m_QualifiedName);
+		xClass->MemberCount = classInfo.m_Fields.size();
+
+		for (const FieldInfo& fInfo : classInfo.m_Fields)
+		{
+			AddField(xClass, fInfo.m_Name);
+		}
+	}
+
 	void Vm::CompileClass(const ClassInfo& classInfo)
 	{
 		// If compilation fails, remove the class.
 
 		size_t functionCount = 0;
 		x_class xClass = GetClass(classInfo.m_QualifiedName);
-		xClass->MemberCount = classInfo.m_Fields.size();
+		if (!xClass)
+		{
+			Error("CompileClass: Could not find class \"" + classInfo.m_QualifiedName + "\"!");
+			return;
+		}
 
 		FunctionObject* defaultInit = NewFunction();
 		ForcePinObject((x_object*)defaultInit);
@@ -280,13 +312,20 @@ namespace Xias {
 		defaultInit->Code.Code.emplace_back(Instruction::create_instance);
 		auto iter = m_ClassNames.find(classInfo.m_QualifiedName);
 		if (iter == m_ClassNames.end())
+		{
+			CompilationError(xClass, "CompileClass: Could not find class!");
 			return;
+		}
 		defaultInit->Code.Code.emplace_back(iter->second);
 
 		for (const FieldInfo& fInfo : classInfo.m_Fields)
 		{
-			x_ulong fieldID = xClass->MemberIndices.size();
-			xClass->MemberIndices.emplace(fInfo.m_Name, fieldID);
+			x_ulong fieldID = FindField(xClass, fInfo.m_Name);
+			if (fieldID == -1)
+			{
+				CompilationError(xClass, "CompileClass: Could not find field \"" + fInfo.m_Name + "\"!");
+				return;
+			}
 			CompileField(fieldID, fInfo, defaultInit);
 		}
 
@@ -328,6 +367,15 @@ namespace Xias {
 	void Vm::AddField(x_class xClass, const std::string& name)
 	{
 		xClass->MemberIndices.emplace(name, xClass->MemberIndices.size());
+	}
+
+	x_ulong Vm::FindField(x_class xClass, const std::string& name)
+	{
+		auto iter = xClass->MemberIndices.find(name);
+		if (iter == xClass->MemberIndices.end())
+			return -1;
+		else
+			return iter->second;
 	}
 
 	void Vm::AddMethod(x_class xClass, x_method method)
@@ -640,6 +688,32 @@ namespace Xias {
 		xClass = m_Classes.emplace_back(xClass);
 		xClass->Name = name;
 		return xClass;
+	}
+
+	void Vm::RemoveClass(x_class xClass)
+	{
+		if (!xClass)
+		{
+			Error("RemoveClass: nullptr given as parameter");
+			return;
+		}
+		auto iter = m_ClassNames.find(xClass->Name);
+		if (iter == m_ClassNames.end())
+		{
+			Error("RemoveClass: Parameter is an orphaned class");
+			return;
+		}
+		x_ulong classID = iter->second;
+		x_class foundClass = m_Classes[classID];
+		if (xClass != foundClass)
+		{
+			Error("RemoveClass: Attempting to remove \"" + xClass->Name + "\", an ambigious class!");
+			return;
+		}
+
+		m_ClassNames.erase(iter);
+		delete xClass;
+		m_Classes[classID] = nullptr;
 	}
 
 	void Vm::CallFunction(FunctionObject* function)
