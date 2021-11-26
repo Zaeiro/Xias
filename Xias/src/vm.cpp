@@ -296,8 +296,6 @@ namespace Xias {
 
 	void Vm::CompileClass(const ClassInfo& classInfo)
 	{
-		// If compilation fails, remove the class.
-
 		size_t functionCount = 0;
 		x_class xClass = GetClass(classInfo.m_QualifiedName);
 		if (!xClass)

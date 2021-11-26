@@ -6,7 +6,7 @@ new public static class Apple
     public static int VeryCoolFunction(int not)
     {
         double value = 3.0;
-        return 3 == 1 ? (int)value : 9;
+        return 3 == 1 ? (int)value : VeryCoolFunction(3);
     }
 }
 

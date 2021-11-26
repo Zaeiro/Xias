@@ -824,7 +824,7 @@ primary_expression
 //     ;
 
 primary_no_array_creation_expression_base
-    : primary_expression_start primary_no_array_creation_expression?
+    : primary_expression_start primary_no_array_creation_expression*
     ;
 
 primary_expression_start
@@ -839,11 +839,31 @@ primary_expression_start
     ;
 
 primary_no_array_creation_expression
-    : member_access
-    | invocation_expression
-    | element_access
-    | post_increment_expression
-    | post_decrement_expression
+    : primary_member_access
+    | primary_invocation
+    | primary_element_access
+    | primary_post_increment
+    | primary_post_decrement
+    ;
+
+primary_member_access
+    : DOT identifier type_argument_list?
+    ;
+
+primary_invocation
+    : OPEN_PARENS argument_list? CLOSE_PARENS
+    ;
+
+primary_element_access
+    : OPEN_BRACKET expression_list CLOSE_BRACKET
+    ;
+
+primary_post_increment
+    : OP_INC
+    ;
+
+primary_post_decrement
+    : OP_DEC
     ;
 
 simple_name
