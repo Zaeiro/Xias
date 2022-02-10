@@ -12,13 +12,15 @@ enum class ModifierType
 	Field,
 	Property,
 	Method,
+	Operator,
+	Constructor
 };
 
 class XiasVisitor : XiasParserBaseVisitor {
 	Xias::NamespaceInfo* m_NamespaceInfo;
 	Xias::CompilationUnit* m_cInfo;
 	std::stack<Xias::NamespaceInfo*> m_QualifierStack;
-	std::stack<Xias::ClassInfo*> m_ClassStack;
+	std::stack<size_t> m_ClassStack;
 	std::stack<Xias::Expression*> m_ExpressionStack;
 	std::stack<Xias::Statement*> m_StatementStack;
 public:    
@@ -33,13 +35,14 @@ private:
 	virtual antlrcpp::Any visitMethod_declaration(XiasParser::Method_declarationContext* ctx) override;
 	// property_declaration
     // indexer_declaration
-    // operator_declaration
-    // constructor_declaration
+	virtual antlrcpp::Any visitOperator_declaration(XiasParser::Operator_declarationContext* ctx) override;
+	virtual antlrcpp::Any visitConstructor_declaration(XiasParser::Constructor_declarationContext* ctx) override;
     // static_constructor_declaration
     // destructor_declaration
     // type_declaration
 
 	virtual antlrcpp::Any visitExpression(XiasParser::ExpressionContext* ctx) override;
+	virtual antlrcpp::Any visitBoolean_expression(XiasParser::Boolean_expressionContext* ctx) override;
 	virtual antlrcpp::Any visitNon_assignment_expression(XiasParser::Non_assignment_expressionContext* ctx) override;
 
 	virtual antlrcpp::Any visitConditional_expression(XiasParser::Conditional_expressionContext* ctx) override;
@@ -64,6 +67,8 @@ private:
 	virtual antlrcpp::Any visitUnary_plus_expression(XiasParser::Unary_plus_expressionContext* ctx) override;
 
 	virtual antlrcpp::Any visitPrimary_no_array_creation_expression_base(XiasParser::Primary_no_array_creation_expression_baseContext* ctx) override;
+	//virtual antlrcpp::Any visitPrimary_expression_start(XiasParser::Primary_expression_startContext* ctx) override;
+	//virtual antlrcpp::Any visitPrimary_no_array_creation_expression(XiasParser::Primary_no_array_creation_expressionContext* ctx) override;
 
 	virtual antlrcpp::Any visitLiteral(XiasParser::LiteralContext* ctx) override;
 	virtual antlrcpp::Any visitSimple_name(XiasParser::Simple_nameContext* ctx) override;
@@ -77,6 +82,12 @@ private:
 	virtual antlrcpp::Any visitElement_initializer(XiasParser::Element_initializerContext* ctx) override;
 	virtual antlrcpp::Any visitTypeof_expression(XiasParser::Typeof_expressionContext* ctx) override;
 	virtual antlrcpp::Any visitDefault_value_expression(XiasParser::Default_value_expressionContext* ctx) override;
+
+	virtual antlrcpp::Any visitPrimary_member_access(XiasParser::Primary_member_accessContext* ctx) override;
+	virtual antlrcpp::Any visitPrimary_invocation(XiasParser::Primary_invocationContext* ctx) override;
+	virtual antlrcpp::Any visitPrimary_element_access(XiasParser::Primary_element_accessContext* ctx) override;
+	virtual antlrcpp::Any visitPrimary_post_increment(XiasParser::Primary_post_incrementContext* ctx) override;
+	virtual antlrcpp::Any visitPrimary_post_decrement(XiasParser::Primary_post_decrementContext* ctx) override;
 
 	virtual antlrcpp::Any visitMember_access(XiasParser::Member_accessContext* ctx) override;
 	virtual antlrcpp::Any visitPredefined_type(XiasParser::Predefined_typeContext* ctx) override;
@@ -140,11 +151,18 @@ private:
 private:
 	int AddNamespaces(const std::string& name);
 	void RemoveNamespaces(int amount);
+	int AddQualifiers(const std::string& name);
+	void RemoveQualifiers(int amount);
 	std::string CreateQualifiedName(const std::string& name);
 	Xias::Expression CreateExpression(XiasParser::Variable_initializerContext* ctx);
 	Xias::Expression CreateExpression(XiasParser::ExpressionContext* ctx);
-	Xias::Statement CreateStatement(XiasParser::Method_bodyContext* ctx);
+	Xias::Statement CreateStatement(XiasParser::BlockContext* ctx);
 	void AddModifiers(Xias::Modifiers* mods, std::vector<XiasParser::All_modifierContext*> modifiers, ModifierType type);
 	void AddModifier(Xias::Modifiers* mods, Xias::Modifier modifier, XiasParser::All_modifierContext* ctx);
 	bool HasModifier(Xias::Modifiers* mods, Xias::Modifier modifier);
+	void SetLine(antlr4::RuleContextWithAltNum* ctx, Xias::LocationInfo* expression);
+	void SetLine(antlr4::RuleContextWithAltNum* ctx, Xias::Expression* expression);
+	void SetLine(antlr4::RuleContextWithAltNum* ctx, Xias::Statement* statement);
+	bool CheckMemberName(int memberCategory, Xias::LocationInfo& lInfo, const std::string& name, Xias::ClassInfo* cInfo);
+	void AddMessage(const Xias::LocationInfo& location, unsigned int errorID, std::vector<std::string> params);
 };

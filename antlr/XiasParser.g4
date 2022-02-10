@@ -403,7 +403,7 @@ indexer_body
 
 // operator_declaration
 operator_declaration
-    : operator_modifier+ operator_declarator operator_body
+    : all_modifier+ operator_declarator operator_body
     ;
 
 operator_modifier
@@ -470,7 +470,7 @@ operator_body
 
 // constructor_declaration
 constructor_declaration
-    : constructor_modifier* constructor_declarator constructor_body
+    : all_modifier* constructor_declarator constructor_body
     ;
 
 constructor_modifier
@@ -677,8 +677,8 @@ selection_statement
     ;
 
 if_statement
-    : IF OPEN_PARENS expression CLOSE_PARENS embedded_statement
-    | IF OPEN_PARENS expression CLOSE_PARENS embedded_statement ELSE embedded_statement
+    : IF OPEN_PARENS boolean_expression CLOSE_PARENS embedded_statement
+    | IF OPEN_PARENS boolean_expression CLOSE_PARENS embedded_statement ELSE embedded_statement
     ;
 
 switch_statement

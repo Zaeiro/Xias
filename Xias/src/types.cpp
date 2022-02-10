@@ -7,13 +7,24 @@ bool Xias::operator==(const Value& lhs, const Value& rhs)
 
 std::string Xias::GetTypeInitial(const std::string& type)
 {
-	if (type == "int") return "I;";
-	else if (type == "uint") return "U;";
-	else if (type == "char") return "U;"; // No char type
-	else if (type == "double") return "D;";
-	else if (type == "float") return "F;";
-	else if (type == "bool") return "B;";
-	else if (type == "string") return "S;";
-	else if (type == "void") return "V;";
-	else return type + ';';
+	std::string result;
+	size_t delimiter;
+	if ((delimiter = type.find("[")) != std::string::npos)
+		result = type.substr(0, delimiter);
+	else
+		result = type;
+
+	if (result == "int") result = "I;";
+	else if (result == "uint") result = "U;";
+	else if (result == "char") result = "U;"; // No char type
+	else if (result == "double") result = "D;";
+	else if (result == "float") result = "F;";
+	else if (result == "bool") result = "B;";
+	else if (result == "string") result = "S;";
+	else if (result == "object") result = "O";
+	else if (result == "void") result = "V;";
+	else result += ';';
+	if ((delimiter = type.find("[")) != std::string::npos)
+		result += type.substr(delimiter);
+	return result;
 }

@@ -20,6 +20,8 @@ Xias::Value CFuncB(Xias::Vm* xvm, int argCount, Xias::Value* args)
 inline void test_vm()
 {
 	Xias::Vm xvm;
+	// TODO: should take a signature, like so
+	// xvm.RegisterFunction(CFunc, "S;CFunc;F;");
 	xvm.RegisterFunction("CFunc", CFunc);
 
 	Xias::Bytecode bytecode;

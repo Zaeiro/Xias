@@ -18,22 +18,23 @@ namespace Xias {
 		function_object,
 		native_function_object,
 		void_native_function_object,
-        string_object,
+		string_object,
 		instance_object,
+		array_object,
     };
 
     struct x_object
     {
-        ObjectType Type;
+		ObjectType Type;
 		bool IsMarked;
 		x_object* Next;
     };
 
     struct StringObject
     {
-        x_object Object;
-        x_ulong Size;
-        char* Chars = nullptr;
+		x_object Object;
+		x_ulong Size;
+		char* Chars = nullptr;
     };
 
 	enum class XType
@@ -58,7 +59,7 @@ namespace Xias {
 		int RequiredStackSize;
 		int LocalCount;
 		Bytecode Code;
-		StringObject* Name;
+		StringObject* Signature;
 	};
 
 	struct InstanceObject
@@ -66,6 +67,14 @@ namespace Xias {
 		x_object Object;
 		x_class Class;
 		std::vector<Value> Members;
+	};
+
+	struct ArrayObject
+	{
+		x_object Object;
+		std::vector<x_ulong> Dimensions;
+		x_class ElementClass;
+		std::vector<InstanceObject> Elements;
 	};
 
 	class Vm;

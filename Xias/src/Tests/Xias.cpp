@@ -21,23 +21,26 @@ int main()
 	// test_parser();
 	// test_vm();
 
-	std::ifstream stream;
-	stream.open("input.xs");
+	Xias::Vm xvm;
+	xvm.Compile("input.xs");
 
-	antlr4::ANTLRInputStream input(stream);
-	XiasLexer lexer(&input);
-	antlr4::CommonTokenStream tokens(&lexer);
-	XiasParser parser(&tokens);
-	XiasParser::Compilation_unitContext* tree = parser.compilation_unit();
+	//std::ifstream stream;
+	//stream.open("input.xs");
 
-	XiasVisitor visitor;
-	Xias::CompilationUnit unitInfo = visitor.visitCompilation_unit(tree).as<Xias::CompilationUnit>();
-	Xias::Vm vm;
-	vm.Compile(unitInfo);
+	//antlr4::ANTLRInputStream input(stream);
+	//XiasLexer lexer(&input);
+	//antlr4::CommonTokenStream tokens(&lexer);
+	//XiasParser parser(&tokens);
+	//XiasParser::Compilation_unitContext* tree = parser.compilation_unit();
 
-	Xias::x_class clas = vm.GetClass("Apple");
-	Xias::x_method method = vm.GetStaticMethod(clas, "I;VeryCoolFunction;I;");
-	std::cout << vm.CallStaticMethod(method, 1).as.Int << "\n";
+	//XiasVisitor visitor;
+	//Xias::CompilationUnit unitInfo = visitor.visitCompilation_unit(tree).as<Xias::CompilationUnit>();
+	//Xias::Vm vm;
+	//vm.Compile(unitInfo);
+
+	//Xias::x_class clas = vm.GetClass("Apple");
+	//Xias::x_method method = vm.GetMethod(clas, "I;VeryCoolFunction;I;");
+	//std::cout << vm.CallStaticMethod(method, 1).as.Int << "\n";
 
 	//size_t acc = 0;
 	//auto begin = std::chrono::high_resolution_clock::now();

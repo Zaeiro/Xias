@@ -4,7 +4,11 @@
 #include "object.h"
 #include "memory.h"
 #include "compilation_unit.h"
-#include "compiler.h"
+#include "XiasLexer.h"
+#include "XiasParser.h"
+#include "XiasVisitor.h"
+
+#include "antlr4-runtime.h"
 
 #include <iostream>
 
@@ -24,7 +28,7 @@
 #define READ_SHORT() (++frame->ip)->Data
 
 #define DEC() (sp--)
-#define POP() (*sp--)
+#define POP() (*(--sp))
 
 #define GC_HEAP_GROW_FACTOR 1.75f
 
@@ -38,6 +42,94 @@
 
 namespace Xias {
 
+	std::string format(const std::string& format, const std::vector<std::string> args)
+	{
+		size_t size = 0;
+		std::vector<std::tuple<size_t, size_t, size_t>> locations;
+		size_t last = 0;
+		size_t location = 0;
+		while ((location = format.find('{', location)) != std::string::npos)
+		{
+			bool isValid = false;
+			size_t digit = location + 1;
+			if (std::isdigit(format[digit]))
+			{
+				digit++;
+				while (digit != format.size())
+				{
+					if (std::isdigit(format[digit]))
+					{
+						digit++;
+						continue;
+					}
+					else if (format[digit] == '}')
+					{
+						last = digit;
+						isValid = true;
+						break;
+					}
+					else
+						break;
+				}
+				if (isValid)
+				{
+					size_t arg = std::strtoull(&format[location + 1], nullptr, 10);
+					if (arg < args.size())
+						locations.push_back({ location, arg, last });
+				}
+			}
+			location = digit + 1;
+		}
+
+		if (!locations.empty())
+		{
+			size_t firstNonToken = 0;
+			for (const auto& loc : locations)
+			{
+				size += std::get<0>(loc) - firstNonToken;
+				size += args[std::get<1>(loc)].size();
+				firstNonToken = std::get<2>(loc) + 1;
+			}
+			size += format.size() - std::get<2>(locations.back()) - 1;
+
+			std::string result;
+			result.reserve(size);
+			firstNonToken = 0;
+			for (const auto& loc : locations)
+			{
+				result.append(&format[firstNonToken], std::get<0>(loc) - firstNonToken);
+				result += args[std::get<1>(loc)];
+				firstNonToken = std::get<2>(loc) + 1;
+			}
+			result.append(&format[firstNonToken], format.size() - std::get<2>(locations.back()) - 1);
+			return result;
+		}
+
+		return format;
+	}
+
+	static std::vector<std::pair<CompilationMessage::Severity, std::string>> ErrorCodes = {
+		{ CompilationMessage::Severity::Fatal, "Cannot implicitly convert type '{0}' to '{1}'" },
+		{ CompilationMessage::Severity::Fatal, "Operator '{0}' cannot be applied to operands of type '{1}' and '{2}'" },
+		{ CompilationMessage::Severity::Fatal, "Operator '{0}' cannot be applied to operand of type '{1}'" },
+		{ CompilationMessage::Severity::Fatal, "Cannot convert type '{0}' to '{1}'" },
+		{ CompilationMessage::Severity::Fatal, "The type '{0}' already contains a definition for '{1}'" }, // 4
+		{ CompilationMessage::Severity::Fatal, "The type '{0}' already defines a member called '{1}' with the same parameter types" },
+		{ CompilationMessage::Severity::Fatal, "'{0}': member names cannot be the same as their enclosing type" },
+		{ CompilationMessage::Severity::Fatal, "Duplicate '{0}' modifier" },
+		{ CompilationMessage::Severity::Fatal, "The modifier '{0}' is not valid for this item" },
+		{ CompilationMessage::Severity::Fatal, "Unknown item when applying modifiers" }, // 9
+		{ CompilationMessage::Severity::Fatal, "More than one protection modifier" },
+		{ CompilationMessage::Severity::Fatal, "Elements defined in a namespace cannot be explicitly declared as private or protected" },
+		{ CompilationMessage::Severity::Fatal, "'{0}' does not contain a definition for '{1}'" },
+		{ CompilationMessage::Severity::Fatal, "'{0}' is inaccessible due to its protection level" },
+		{ CompilationMessage::Severity::Fatal, "Unkown compiler error" }, // 14
+		{ CompilationMessage::Severity::Fatal, "Non-invocable member '{0}' cannot be used like a method" },
+		{ CompilationMessage::Severity::Fatal, "No method found matching the signature '{0}'" },
+		{ CompilationMessage::Severity::Fatal, "The type or namespace '{0}' could not be found, you may be missing a using directive" },
+		{ CompilationMessage::Severity::Fatal, "A local named '{0}' cannot be declared in this scope because that name is used in an enclosing local scope to define a local or parameter" },
+	};
+
 	Vm::Vm()
 	{
 		m_FrameCount = 0;
@@ -50,13 +142,15 @@ namespace Xias {
 		m_BytesAllocated = 0;
 		m_NextGC = 1024 * 4;
 
-		AddClass("Double");
-		AddClass("Float");
-		AddClass("Int");
-		AddClass("UInt");
-		AddClass("Bool");
+		AddClass("double");
+		AddClass("float");
+		AddClass("int");
+		AddClass("uint");
+		AddClass("bool");
 		AddClass("Object");
 		AddClass("String");
+
+		m_Compiler = Compiler(this);
 	}
 
 	Vm::~Vm()
@@ -64,7 +158,31 @@ namespace Xias {
 		FreeObjects();
 	}
 
-	bool Vm::Compile(const CompilationUnit& compilationUnit)
+	bool Vm::Compile(const std::string& filepath)
+	{
+		std::ifstream stream;
+		stream.open(filepath);
+
+		antlr4::ANTLRInputStream input(stream);
+		XiasLexer lexer(&input);
+		antlr4::CommonTokenStream tokens(&lexer);
+		XiasParser parser(&tokens);
+		XiasParser::Compilation_unitContext* tree = parser.compilation_unit();
+		stream.close();
+
+		XiasVisitor visitor;
+		Xias::CompilationUnit unitInfo = visitor.visitCompilation_unit(tree).as<Xias::CompilationUnit>();
+		if (LogMessages(unitInfo.m_Messages))
+		{
+			GenerateClassInfo(unitInfo);
+			//m_CompilationUnits.emplace_back(unitInfo);
+			Compile(unitInfo);
+		}
+
+		return false;
+	}
+
+	bool Vm::Compile(CompilationUnit& compilationUnit)
 	{
 		for (const ClassInfo& cInfo : compilationUnit.m_Classes)
 		{
@@ -73,10 +191,15 @@ namespace Xias {
 
 		for (const ClassInfo& cInfo : compilationUnit.m_Classes)
 		{
+			SetParent(cInfo);
+		}
+
+		for (ClassInfo& cInfo : compilationUnit.m_Classes)
+		{
 			CompileClass(cInfo);
 		}
 
-		return false;
+		return true;
 	}
 
 	void Vm::RegisterFunction(const std::string& name, NativeFn function)
@@ -159,6 +282,88 @@ namespace Xias {
 		return nullptr;
 	}
 
+	//MemberInfo Vm::GetMemberInfo(const std::string& xClass, const std::string& name)
+	//{
+	//	for (const CompilationUnit& unit : m_CompilationUnits)
+	//	{
+	//		for (const ClassInfo& cInfo : unit.m_Classes)
+	//		{
+	//			for (const MemberInfo& mInfo : cInfo.m_Members)
+	//			{
+	//				if (mInfo.m_Name == name)
+	//					return mInfo;
+	//			}
+	//		}
+	//	}
+	//	return MemberInfo();
+	//}
+
+	Member Vm::GetMember(x_class xClass, const std::string& name)
+	{
+		Member m;
+		m.m_Type = Member::Category::NotFound;
+		auto iter = m_ClassInfo.find(xClass->Name);
+		if (iter != m_ClassInfo.end())
+		{
+			auto memberIter = iter->second.m_Members.find(name);
+			if (memberIter != iter->second.m_Members.end())
+			{
+				return memberIter->second;
+			}
+		}
+		return m;
+	}
+
+	bool Vm::IsClassDescendent(const std::string& parent, const std::string& descendent)
+	{
+
+		return false;
+	}
+
+	std::vector<std::string> Vm::SplitSignature(std::string signature)
+	{
+		std::vector<std::string> tokens;
+
+		size_t begin = 0, delimiter;
+		while ((delimiter = signature.find(";", begin)) != std::string::npos)
+		{
+			tokens.emplace_back(signature.substr(begin, delimiter));
+			begin = delimiter + 1;
+		}
+		tokens.emplace_back(signature.substr(begin));
+		return tokens;
+	}
+
+	std::string Vm::GetMethodName(std::string signature)
+	{
+		return SplitSignature(signature)[1];
+	}
+
+	std::string Vm::CompleteSignature(const std::string& signature)
+	{
+		std::vector<std::string> elements = SplitSignature(signature);
+		for (x_class xClass : m_Classes)
+		{
+			for (auto& [methodSignature, methodIndex] : xClass->FunctionIndices)
+			{
+				std::vector<std::string> candidateElements = SplitSignature(methodSignature);
+				if (candidateElements.size() != elements.size() + 1)
+					continue;
+				bool valid = true;
+				for (int i = 1; i < candidateElements.size(); i++)
+				{
+					if (elements[i] != candidateElements[i])
+					{
+						valid = false;
+						break;
+					}
+				}
+				if (valid) return methodSignature;
+			}
+		}
+		return std::string();
+	}
+
 	void Vm::CallFunction(Bytecode& bytecode)
 	{
 		// Creating function to hold supplied bytecode
@@ -197,6 +402,28 @@ namespace Xias {
 		printf("   collected %zu bytes (from %zu to %zu)\n", before - m_BytesAllocated, before, m_BytesAllocated);
 		printf("   next gc at %zu\n", m_NextGC);
 #endif
+	}
+
+	x_method Vm::GetImplicitConversion(x_class from, x_class to)
+	{
+		if (from == nullptr || to == nullptr)
+			return nullptr;
+
+		std::string castName = to->Name + ";()" + from->Name + ';';
+		auto c1 = from->ImplicitCastIndices.find(castName);
+		auto c2 = to->ImplicitCastIndices.find(castName);
+		if (c1 != from->ImplicitCastIndices.end())
+		{
+			if (c2 != to->ImplicitCastIndices.end())
+				return nullptr;
+			return from->Functions[c1->second];
+		}
+		else
+		{
+			if (c2 != to->ImplicitCastIndices.end())
+				return to->Functions[c2->second];
+			return nullptr;
+		}
 	}
 
 	void Vm::FreeObjects()
@@ -261,6 +488,31 @@ namespace Xias {
 		}
 	}
 
+	bool Vm::LogMessages(std::vector<CompilationMessage>& messages)
+	{
+		bool success = true;
+		for (CompilationMessage& msg : messages)
+		{
+			LogMessage(msg);
+			if (ErrorCodes[msg.ErrorID].first == CompilationMessage::Severity::Fatal)
+				success = false;
+		}
+		return success;
+	}
+
+	void Vm::LogMessage(CompilationMessage& message)
+	{
+		auto& msg = ErrorCodes[message.ErrorID];
+		switch (msg.first)
+		{
+			case CompilationMessage::Severity::Fatal: std::cout << "Error "; break;
+			case CompilationMessage::Severity::Warning: std::cout << "Warning "; break;
+			case CompilationMessage::Severity::Hint: std::cout << "Hint "; break;
+		}
+		std::cout << format("(line {0}, col {1}): ", { std::to_string(message.Line), std::to_string(message.Column) });
+		std::cout << format(msg.second, message.Params) << std::endl;
+	}
+
 	void Vm::Error(const char* msg)
 	{
 		std::cerr << sp - &m_Stack[0] << " : " << msg << std::endl;
@@ -292,9 +544,90 @@ namespace Xias {
 		{
 			AddField(xClass, fInfo.m_Name);
 		}
+
+		if (classInfo.m_Constructors.size())
+		{
+			for (const ConstructorInfo& ctorInfo : classInfo.m_Constructors)
+			{
+				FunctionObject* ctor = NewFunction();
+				ScopedPin ctorPin = PinObject((x_object*)ctor);
+				ctor->Signature = CopyString(ctorInfo.m_Signature);
+				ctor->Arity = ctorInfo.m_Parameters.size();
+				AddMethod(xClass, ctor);
+			}
+		}
+		else
+		{
+			FunctionObject* ctor = NewFunction();
+			ScopedPin ctorPin = PinObject((x_object*)ctor);
+			ctor->Signature = CopyString(";<>;");
+			AddMethod(xClass, ctor);
+		}
+
+		for (const MethodInfo& methodInfo : classInfo.m_Methods)
+		{
+			FunctionObject* method = NewFunction();
+			ScopedPin methodPin = PinObject((x_object*)method);
+			method->Signature = CopyString(methodInfo.m_Signature);
+			method->Arity = methodInfo.m_Parameters.size();
+			AddMethod(xClass, method);
+		}
+
+		//for (const OperatorInfo& operatorInfo : classInfo.m_Operators)
+		//{
+		//	FunctionObject* method = NewFunction();
+		//	ScopedPin methodPin = PinObject((x_object*)method);
+		//	method->Signature = CopyString(operatorInfo.m_Signature);
+		//	method->Arity = operatorInfo.m_Parameters.size();
+		//	AddMethod(xClass, method);
+		//}
+
+		for (const CastOperatorInfo& operatorInfo : classInfo.m_Casts)
+		{
+			FunctionObject* method = NewFunction();
+			ScopedPin methodPin = PinObject((x_object*)method);
+			method->Signature = CopyString(operatorInfo.m_Signature);
+			method->Arity = 1;
+			if (operatorInfo.m_Type == CastOperatorInfo::Implicit)
+				AddImplicitCast(xClass, method);
+			else
+				AddMethod(xClass, method);
+		}
 	}
 
-	void Vm::CompileClass(const ClassInfo& classInfo)
+	void Vm::SetParent(const ClassInfo& classInfo)
+	{
+		size_t functionCount = 0;
+		x_class xClass = GetClass(classInfo.m_QualifiedName);
+		if (!xClass)
+		{
+			Error("SetParent: Could not find class \"" + classInfo.m_QualifiedName + "\"!");
+			return;
+		}
+
+		for (auto& parent : classInfo.m_Parents)
+		{
+			if (xClass->Parent)
+			{
+				Error("SetParent: Class \"" + classInfo.m_QualifiedName + "\" already has a parent!");
+				return;
+			}
+			x_class parentClass = GetClass(parent);
+			if (!parentClass)
+			{
+				Error("SetParent: Could not find class \"" + parent + "\"!");
+				return;
+			}
+			xClass->Parent = parentClass;
+		}
+
+		if (!xClass->Parent)
+		{
+			xClass->Parent = m_Compiler.objectClass;
+		}
+	}
+
+	void Vm::CompileClass(ClassInfo& classInfo)
 	{
 		size_t functionCount = 0;
 		x_class xClass = GetClass(classInfo.m_QualifiedName);
@@ -305,8 +638,8 @@ namespace Xias {
 		}
 
 		FunctionObject* defaultInit = NewFunction();
-		ForcePinObject((x_object*)defaultInit);
-		defaultInit->Name = CopyString("<>");
+		ScopedPin initPin = PinObject((x_object*)defaultInit);
+		defaultInit->Signature = CopyString(";<>;");
 		defaultInit->Code.Code.emplace_back(Instruction::create_instance);
 		auto iter = m_ClassNames.find(classInfo.m_QualifiedName);
 		if (iter == m_ClassNames.end())
@@ -316,50 +649,98 @@ namespace Xias {
 		}
 		defaultInit->Code.Code.emplace_back(iter->second);
 
+		Statement defaultInitBody;
+		defaultInitBody.m_Type = Statement::block;
 		for (const FieldInfo& fInfo : classInfo.m_Fields)
 		{
-			x_ulong fieldID = FindField(xClass, fInfo.m_Name);
-			if (fieldID == -1)
+			Statement& statementExpression = defaultInitBody.m_Children.emplace_back();
+			statementExpression.m_Type = Statement::statement_expression;
+			Expression& expression = statementExpression.m_Expressions.emplace_back();
+			expression.m_Type = Expression::expression;
+			Expression& assignment = expression.m_Children.emplace_back();
+			assignment.m_Type = Expression::assignment;
+			Expression& left = assignment.m_Children.emplace_back();
+			left.m_Type = Expression::primary_no_array_creation_base;
+			Expression& name = left.m_Children.emplace_back();
+			name.m_Type = Expression::simple_name;
+			name.m_Data.emplace_back(fInfo.m_Name);
+			if (fInfo.m_VariableInitializer.m_Children.size() > 0)
 			{
-				CompilationError(xClass, "CompileClass: Could not find field \"" + fInfo.m_Name + "\"!");
+				// TODO: Array initializers
+				assignment.m_Children.emplace_back(fInfo.m_VariableInitializer.m_Children[0]);
+			}
+			else
+			{
+				Expression& right = assignment.m_Children.emplace_back();
+				right.m_Type = Expression::primary_no_array_creation_base;
+				Expression& defaultValue = right.m_Children.emplace_back();
+				defaultValue.m_Type = Expression::default_value;
+				defaultValue.m_Data.emplace_back(fInfo.m_Type);
+			}
+		}
+
+		//for (const FieldInfo& fInfo : classInfo.m_Fields)
+		//{
+		//	x_ulong fieldID = FindField(xClass, fInfo.m_Name);
+		//	if (fieldID == -1)
+		//	{
+		//		CompilationError(xClass, "CompileClass: Could not find field \"" + fInfo.m_Name + "\"!");
+		//		return;
+		//	}
+		//	CompileField(fieldID, fInfo, defaultInit);
+		//}
+
+		if (!Compile(xClass, defaultInit, defaultInitBody))
+			return;
+
+		for (ConstructorInfo& mInfo : classInfo.m_Constructors)
+		{
+			FunctionObject* ctor = DuplicateFunction(defaultInit);
+			ScopedPin ctorPin = PinObject((x_object*)ctor);
+			ctor->Signature = CopyString(mInfo.m_Signature);
+			ctor->Arity = mInfo.m_Parameters.size();
+			if (!Compile(xClass, ctor, mInfo.m_Body))
 				return;
-			}
-			CompileField(fieldID, fInfo, defaultInit);
+			ctor->Code.Code.emplace_back(Instruction::func_return);
+			x_method presentctor = GetMethod(xClass, mInfo.m_Signature);
+			DuplicateFunction(ctor, presentctor);
 		}
 
-		// Default constructor
-		if (classInfo.m_Constructors.empty())
-		{
-			defaultInit->Code.Code.emplace_back(Instruction::func_return);
-			AddMethod(xClass, defaultInit);
-		}
-		else
-		{
-			for (const ConstructorInfo& mInfo : classInfo.m_Constructors)
-			{
-				FunctionObject* ctor = DuplicateFunction(defaultInit);
-				ForcePinObject((x_object*)ctor);
-				ctor->Name = CopyString(";<>;" + mInfo.m_Signature);
-				ctor->Arity = mInfo.m_Parameters.size();
-				CompileStatement(mInfo.m_Body, ctor);
-				ctor->Code.Code.emplace_back(Instruction::func_return);
-				AddMethod(xClass, ctor);
-				UnPinObject((x_object*)ctor);
-			}
-		}
-
-		for (const MethodInfo& mInfo : classInfo.m_Methods)
+		for (MethodInfo& mInfo : classInfo.m_Methods)
 		{
 			FunctionObject* method = NewFunction();
-			ForcePinObject((x_object*)method);
-			method->Name = CopyString(mInfo.m_Name);
+			ScopedPin methodPin = PinObject((x_object*)method);
+			method->Signature = CopyString(mInfo.m_Signature);
 			method->Arity = mInfo.m_Parameters.size();
-			CompileStatement(mInfo.m_Body, method);
-			AddMethod(xClass, method);
-			UnPinObject((x_object*)method);
+			if (!Compile(xClass, method, mInfo.m_Body))
+				return;
+			x_method presentMethod = GetMethod(xClass, mInfo.m_Signature);
+			DuplicateFunction(method, presentMethod);
 		}
 
-		UnPinObject((x_object*)defaultInit);
+		//for (OperatorInfo& mInfo : classInfo.m_Operators)
+		//{
+		//	FunctionObject* method = NewFunction();
+		//	ScopedPin methodPin = PinObject((x_object*)method);
+		//	method->Signature = CopyString(mInfo.m_Signature);
+		//	method->Arity = mInfo.m_Parameters.size();
+		//	if (!Compile(xClass, method, mInfo.m_Body))
+		//		return;
+		//	x_method presentMethod = GetMethod(xClass, mInfo.m_Signature);
+		//	DuplicateFunction(method, presentMethod);
+		//}
+
+		for (CastOperatorInfo& mInfo : classInfo.m_Casts)
+		{
+			FunctionObject* method = NewFunction();
+			ScopedPin methodPin = PinObject((x_object*)method);
+			method->Signature = CopyString(mInfo.m_Signature);
+			method->Arity = 1;
+			if (!Compile(xClass, method, mInfo.m_Body))
+				return;
+			x_method presentMethod = GetMethod(xClass, mInfo.m_Signature);
+			DuplicateFunction(method, presentMethod);
+		}
 	}
 
 	void Vm::AddField(x_class xClass, const std::string& name)
@@ -378,39 +759,108 @@ namespace Xias {
 
 	void Vm::AddMethod(x_class xClass, x_method method)
 	{
-		xClass->FunctionIndices.emplace(method->Name->Chars, xClass->FunctionIndices.size());
+		xClass->FunctionIndices.emplace(method->Signature->Chars, xClass->Functions.size());
 		xClass->Functions.emplace_back(method);
 	}
 
-	void Vm::CompileField(x_ulong fieldID, const FieldInfo& fieldInfo, x_method method)
+	void Vm::AddImplicitCast(x_class xClass, x_method method)
 	{
-		// TODO: Account for default initialized fields
-		if (fieldInfo.m_VariableInitializer.m_Children.size() > 0)
-			CompileExpression(fieldInfo.m_VariableInitializer, method);
-		else
-			method->Code.Code.emplace_back(Instruction::literal_nullptr);
-
-		method->Code.Code.emplace_back(Instruction::set_field);
-		method->Code.Code.emplace_back(fieldID);
+		xClass->FunctionIndices.emplace(method->Signature->Chars, xClass->Functions.size());
+		xClass->ImplicitCastIndices.emplace(method->Signature->Chars, xClass->Functions.size());
+		xClass->Functions.emplace_back(method);
 	}
 
-	x_method Vm::CompileStatement(const Statement& statement)
+	bool Vm::Compile(x_class xClass, x_method method, Statement& block)
 	{
-		FunctionObject* method = NewFunction();
-		CompileStatement(statement, method);
-		return method;
+		std::vector<CompilationMessage> messages = m_Compiler.Compile(xClass, method, block);
+		bool success = LogMessages(messages);
+		if (!success)
+			RemoveClass(xClass);
+		return success;
 	}
 
-	void Vm::CompileStatement(const Statement& statement, x_method method)
+	void Vm::GenerateClassInfo(const CompilationUnit& unit)
 	{
-		Compiler::Compile(this, statement, method);
+		for (auto& xClass : unit.m_Classes)
+		{
+			ClassCompilationInfo cInfo;
+			for (auto& member : xClass.m_Fields)
+			{
+				Member xMember;
+				xMember.m_ContainingClass = xClass.m_Name;
+				xMember.m_Modifiers = member.m_Modifiers;
+				xMember.m_Type = Member::Category::Field;
+				xMember.m_Data = member.m_Type;
+				cInfo.m_Members.emplace(member.m_Name, xMember);
+			}
+			for (auto& member : xClass.m_Properties)
+			{
+				Member xMember;
+				xMember.m_ContainingClass = xClass.m_Name;
+				xMember.m_Modifiers = member.m_Modifiers;
+				xMember.m_Type = Member::Category::Property;
+				xMember.m_Data = member.m_Type;
+				cInfo.m_Members.emplace(member.m_Name, xMember);
+			}
+			for (auto& member : xClass.m_Methods)
+			{
+				Member xMember;
+				xMember.m_ContainingClass = xClass.m_Name;
+				xMember.m_Modifiers = member.m_Modifiers;
+				xMember.m_Type = Member::Category::Method;
+				xMember.m_Data = member.m_Type;
+				cInfo.m_Members.emplace(member.m_Name, xMember);
+			}
+			for (auto& member : xClass.m_Casts)
+			{
+				Member xMember;
+				xMember.m_ContainingClass = xClass.m_Name;
+				xMember.m_Modifiers = member.m_Modifiers;
+				xMember.m_Type = Member::Category::Method;
+				std::string name = GetMethodName(member.m_Signature);
+				cInfo.m_Members.emplace(name, xMember);
+			}
+			for (auto& member : xClass.m_Constructors)
+			{
+				Member xMember;
+				xMember.m_ContainingClass = xClass.m_Name;
+				xMember.m_Modifiers = member.m_Modifiers;
+				xMember.m_Type = Member::Category::Constructor;
+				std::string name = GetMethodName(member.m_Signature);
+				cInfo.m_Members.emplace(name, xMember);
+			}
+			m_ClassInfo.emplace(xClass.m_Name, cInfo);
+		}
 	}
 
-	XType Vm::CompileExpression(const Expression& expression, x_method method)
-	{
-		Compiler::Compile(this, expression, method);
-		return XType::Instance; // ???
-	}
+	//void Vm::CompileField(x_ulong fieldID, const FieldInfo& fieldInfo, x_method method)
+	//{
+	//	if (fieldInfo.m_VariableInitializer.m_Children.size() > 0)
+	//		CompileExpression(fieldInfo.m_VariableInitializer, method);
+	//	else
+	//		method->Code.Code.emplace_back(Instruction::literal_nullptr);
+
+	//	method->Code.Code.emplace_back(Instruction::set_field);
+	//	method->Code.Code.emplace_back(fieldID);
+	//}
+
+	//x_method Vm::CompileStatement(const Statement& statement)
+	//{
+	//	FunctionObject* method = NewFunction();
+	//	CompileStatement(statement, method);
+	//	return method;
+	//}
+
+	//void Vm::CompileStatement(const Statement& statement, x_method method)
+	//{
+	//	//Compiler::Compile(this, statement, method);
+	//}
+
+	//XType Vm::CompileExpression(const Expression& expression, x_method method)
+	//{
+	//	//Compiler::Compile(this, expression, method);
+	//	return XType::Instance; // ???
+	//}
 
 	StringObject* Vm::FindInternedString(const char* chars, x_ulong length)
 	{
@@ -522,7 +972,7 @@ namespace Xias {
 			case ObjectType::function_object:
 			{
 				FunctionObject* function = (FunctionObject*)object;
-				MarkObject((x_object*)function->Name);
+				MarkObject((x_object*)function->Signature);
 				for (Value value : function->Code.Constants)
 				{
 					if (value.Type == ValueType::Object)
@@ -568,10 +1018,10 @@ namespace Xias {
 		return value;
 	}
 
-	void Vm::PinObject(x_object* object)
+	Vm::ScopedPin Vm::PinObject(x_object* object)
 	{
-		if (!FindPinnedObject(object))
-			ForcePinObject(object);
+		ForcePinObject(object);
+		return ScopedPin(this, object);
 	}
 
 	void Vm::ForcePinObject(x_object* object)
@@ -650,18 +1100,23 @@ namespace Xias {
 		function->RequiredStackSize = 0;
 		// function->Code is default initalized
 		function->LocalCount = 0;
-		function->Name = nullptr;
+		function->Signature = nullptr;
 		return function;
 	}
 
-	FunctionObject* Vm::DuplicateFunction(FunctionObject* oldFunction)
+	void Vm::DuplicateFunction(x_method oldFunction, x_method newFunction)
+	{
+		newFunction->Arity = oldFunction->Arity;
+		newFunction->RequiredStackSize = oldFunction->RequiredStackSize;
+		newFunction->Code = oldFunction->Code;
+		newFunction->LocalCount = oldFunction->LocalCount;
+		newFunction->Signature = oldFunction->Signature;
+	}
+
+	FunctionObject* Vm::DuplicateFunction(x_method oldFunction)
 	{
 		FunctionObject* function = NewFunction();
-		function->Arity = oldFunction->Arity;
-		function->RequiredStackSize = oldFunction->RequiredStackSize;
-		function->Code = oldFunction->Code;
-		function->LocalCount = oldFunction->LocalCount;
-		function->Name = oldFunction->Name;
+		DuplicateFunction(oldFunction, function);
 		return function;
 	}
 
@@ -711,7 +1166,10 @@ namespace Xias {
 
 		m_ClassNames.erase(iter);
 		delete xClass;
-		m_Classes[classID] = nullptr;
+		m_Classes.erase(m_Classes.begin() + classID);
+		for (auto& [name, id] : m_ClassNames)
+			if (id > classID)
+				id--;
 	}
 
 	void Vm::CallFunction(FunctionObject* function)
@@ -786,7 +1244,7 @@ namespace Xias {
 	{
 		CallFrame* frame = &m_Frames[m_FrameCount - 1];
 
-		sp = &m_Stack[1];
+		//sp = &m_Stack[1];
 		OpType* ie = &(*frame->Function->Code.Code.begin()) + frame->Function->Code.Code.size();
 		if (frame->ip == ie)
 			return 0;
@@ -877,6 +1335,7 @@ namespace Xias {
 				case Instruction::uint_bit_and: { LEFT_OPERAND(UInt) = LEFT_OPERAND(UInt) & RIGHT_OPERAND(UInt); DEC(); break; }
 				case Instruction::uint_bit_or: { LEFT_OPERAND(UInt) = LEFT_OPERAND(UInt) | RIGHT_OPERAND(UInt); DEC(); break; }
 				case Instruction::uint_bit_xor: { LEFT_OPERAND(UInt) = LEFT_OPERAND(UInt) ^ RIGHT_OPERAND(UInt); DEC(); break; }
+
 				case Instruction::bool_negate: { UNARY_OPERAND(Bool) = !UNARY_OPERAND(Bool); break; }
 				case Instruction::bool_and: { LEFT_OPERAND(Bool) = LEFT_OPERAND(Bool) & RIGHT_OPERAND(Bool); break; }
 				case Instruction::bool_or: { LEFT_OPERAND(Bool) = LEFT_OPERAND(Bool) | RIGHT_OPERAND(Bool); break; }
@@ -1280,6 +1739,17 @@ namespace Xias {
 		}
 
 		return Value(0);
+	}
+
+	Vm::ScopedPin::ScopedPin(Vm* xvm, x_object* object)
+	{
+		m_XVM = xvm;
+		m_Object = object;
+	}
+
+	Vm::ScopedPin::~ScopedPin()
+	{
+		m_XVM->UnPinObject(m_Object);
 	}
 }
 
