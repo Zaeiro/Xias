@@ -17,9 +17,9 @@ enum class ModifierType
 };
 
 class XiasVisitor : XiasParserBaseVisitor {
-	Xias::NamespaceInfo* m_NamespaceInfo;
+	std::shared_ptr<Xias::NamespaceInfo> m_NamespaceInfo;
 	Xias::CompilationUnit* m_cInfo;
-	std::stack<Xias::NamespaceInfo*> m_QualifierStack;
+	std::vector<std::shared_ptr<Xias::NamespaceInfo>> m_QualifierStack;
 	std::stack<size_t> m_ClassStack;
 	std::stack<Xias::Expression*> m_ExpressionStack;
 	std::stack<Xias::Statement*> m_StatementStack;
@@ -164,5 +164,6 @@ private:
 	void SetLine(antlr4::RuleContextWithAltNum* ctx, Xias::Expression* expression);
 	void SetLine(antlr4::RuleContextWithAltNum* ctx, Xias::Statement* statement);
 	bool CheckMemberName(int memberCategory, Xias::LocationInfo& lInfo, const std::string& name, Xias::ClassInfo* cInfo);
+	void CheckParameters(Xias::LocationInfo& lInfo, std::vector<Xias::ParameterInfo>& parameters);
 	void AddMessage(const Xias::LocationInfo& location, unsigned int errorID, std::vector<std::string> params);
 };

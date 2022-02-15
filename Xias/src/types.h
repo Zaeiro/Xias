@@ -3,6 +3,7 @@
 #include <vector>
 #include <cstdint>
 #include <unordered_map>
+#include <memory>
 
 namespace Xias {
 
@@ -65,12 +66,15 @@ namespace Xias {
 
 	bool operator==(const Value& lhs, const Value& rhs);
 
+	struct InfoHierarchyMember;
+
 	struct _x_class;
 	using x_class = _x_class*;
 
 	struct _x_class
 	{
 		std::string Name;
+		std::shared_ptr<InfoHierarchyMember> Info;
 
 		x_long MemberCount;
 		std::unordered_map<std::string, x_ulong> MemberIndices;

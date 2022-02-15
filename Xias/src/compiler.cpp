@@ -27,13 +27,23 @@ namespace Xias {
 		stringClass = vm->GetClass("String");
 	}
 
-	std::vector<CompilationMessage> Compiler::Compile(x_class xclass, x_method method, Statement& statement)
+	std::vector<CompilationMessage> Compiler::Compile(x_class xclass, x_method method, const std::vector<ParameterInfo>& parameters, Statement& statement)
 	{
 		std::vector<CompilationMessage> messages;
 		this->messages = &messages;
 		containingClass = xclass;
+		currentScopeDepth++;
+		for (auto& parameter : parameters)
+		{
+			StackElementInfo e;
+			e.ScopeDepth = currentScopeDepth;
+			e.Name = parameter.m_Name;
+			e.ElementType = CreateType(parameter.m_Type);
+			stack.push_back(e);
+		}
 		StaticCheck(statement);
-		CreateDAG(statement);
+		ObliterateScope();
+		//CreateDAG(statement);
 		// convert to IR following SSA structure
 		// optimizations
 		// then convert to xias
@@ -59,19 +69,25 @@ namespace Xias {
 					AddMessage(no_type_or_namespace, { statement.m_Data[0] });
 				for (Statement& declarator : statement.m_Children)
 				{
+					auto initializer = declarator.m_Expressions[0];
 					for (StackElementInfo& element : stack)
 					{
-						if (element.Name == declarator.m_Data[0])
+						if (element.Name == initializer.m_Data[0])
 						{
-							AddMessage(variable_shadowed, { declarator.m_Data[0] });
+							AddMessage(variable_shadowed, { initializer.m_Data[0] });
 						}
 					}
 
 					StackElementInfo e;
 					e.ScopeDepth = currentScopeDepth;
-					e.Name = declarator.m_Data[0];
+					e.Name = initializer.m_Data[0];
 					e.ElementType = type;
 					stack.push_back(e);
+
+					if (!initializer.m_Children.empty())
+					{
+						Walk(initializer);
+					}
 				}
 				break;
 			}
@@ -85,7 +101,7 @@ namespace Xias {
 				{
 					std::vector<std::string> castElements = vm->SplitSignature(castSignature);
 					Type castType = CreateType(castElements[0]);
-					if (castType.Dimensions.size() == 0 && castType.Class == boolClass)
+					if (castType.Dimensions.empty() && castType.Class == boolClass)
 						success = true;
 				}
 				if (!success)
@@ -115,19 +131,23 @@ namespace Xias {
 		}
 	}
 
-	ExpressionResult& Compiler::Walk(Expression& expression)
+	ExpressionResult Compiler::Walk(Expression& expression)
 	{
 		line = expression.m_Line;
 		column = expression.m_Column;
 		switch (expression.m_Type)
 		{
+			case Expression::expression:
+			{
+				return Walk(expression.m_Children[0]);
+			}
 			case Expression::boolean_expression:
 			{
 				ExpressionResult result = Walk(expression.m_Children[0]);
 				Type& ret = result.m_Type;
 				Type bType;
 				bType.Class = boolClass;
-				if (ret.Dimensions.size() == 0)
+				if (ret.Dimensions.empty())
 				{
 					if (ret.Class == nullptr)
 						AddMessage(implicit_type_conversion, { CreateName(ret), "bool" });
@@ -157,6 +177,57 @@ namespace Xias {
 					AddMessage(implicit_type_conversion, { CreateName(ret), "bool" });
 				return ExpressionResult(ExpressionResult::Category::_Value, bType);
 			}
+			case Expression::conditional_expression:
+			{
+				ExpressionResult resultL = Walk(expression.m_Children[0]);
+				ExpressionResult resultM = Walk(expression.m_Children[1]);
+				ExpressionResult resultR = Walk(expression.m_Children[2]);
+				Type& left = resultL.m_Type;
+				Type& middle = resultM.m_Type;
+				Type& right = resultR.m_Type;
+				ExpressionResult result;
+
+				if (left.Class != boolClass)
+					if (!vm->GetImplicitConversion(left.Class, boolClass))
+						AddMessage(implicit_type_conversion, { CreateName(left), "bool" });
+				if (middle.Class != nullptr && right.Class != nullptr)
+				{
+					if (middle.Class != right.Class)
+					{
+						if (vm->GetImplicitConversion(middle.Class, right.Class))
+						{
+							if (!vm->GetImplicitConversion(right.Class, middle.Class))
+								result.m_Type.Class = right.Class;
+							else
+								AddMessage(undetermined_conditional_convertable, { CreateName(middle), CreateName(right) });
+						}
+						else
+						{
+							if (vm->GetImplicitConversion(right.Class, middle.Class))
+								result.m_Type.Class = middle.Class;
+							else
+								AddMessage(undetermined_conditional_non_convertable, { CreateName(middle), CreateName(right) });
+						}
+					}
+					else
+						result.m_Type.Class = middle.Class;
+				}
+				else
+					result.m_Type.Class = nullptr;
+
+				result.m_Category = ExpressionResult::Category::_Value;
+				result.m_Type.Category = Type::rvalue;
+				return result;
+			}
+			case Expression::null_coalescing_expression:
+			case Expression::conditional_or_expression:
+			case Expression::conditional_and_expression:
+			case Expression::inclusive_or_expression:
+			case Expression::exclusive_or_expression:
+			case Expression::and_expression:
+			case Expression::equality_expression_EQ:
+			case Expression::equality_expression_NE:
+				break;
 			case Expression::relational_expression_LT:
 			case Expression::relational_expression_GT:
 			case Expression::relational_expression_OP_LE:
@@ -173,8 +244,8 @@ namespace Xias {
 			{
 				ExpressionResult resultL = Walk(expression.m_Children[0]);
 				ExpressionResult resultR = Walk(expression.m_Children[1]);
-				Type& right = resultL.m_Type;
-				Type& left = resultR.m_Type;
+				Type& left = resultL.m_Type;
+				Type& right = resultR.m_Type;
 
 				OverloadResolution resolution = ResolveOverload(expression.m_Data[0], { left, right });
 				if (resolution.Return.Class == nullptr)
@@ -207,12 +278,7 @@ namespace Xias {
 				if (resolution.Return.Class == nullptr)
 					AddMessage(type_conversion, { CreateName(type), expression.m_Data[0] });
 
-				// This crashes
-				//return ExpressionResult(ExpressionResult::Category::_Value, resolution.Return);
-
-				// This does not
-				ExpressionResult vsBug = ExpressionResult(ExpressionResult::Category::_Value, resolution.Return);
-				return vsBug;
+				return ExpressionResult(ExpressionResult::Category::_Value, resolution.Return);
 			}
 			case Expression::primary_no_array_creation_base:
 			{
@@ -243,13 +309,6 @@ namespace Xias {
 				//	Type type = Walk(expression.m_Children[i])
 				//}
 			}
-			case Expression::integer_literal:
-			{
-				Type type;
-				type.Class = intClass;
-				type.Category = Type::rvalue;
-				return ExpressionResult(ExpressionResult::Category::_Value, type);
-			}
 			case Expression::invocation_expression:
 			{
 				return WalkPrimary(expression.m_Children);
@@ -268,6 +327,70 @@ namespace Xias {
 				//	AddMessage(method_not_found, { signature });
 				//return ExpressionResult(ExpressionResult::Category::_Nothing, Type());
 			}
+			case Expression::local_variable_initializer:
+			case Expression::assignment:
+			{
+				ExpressionResult resultL;
+				ExpressionResult resultR;
+				if (expression.m_Type == Expression::assignment)
+				{
+					resultL = Walk(expression.m_Children[0]);
+					resultR = Walk(expression.m_Children[1]);
+				}
+				else
+				{
+					resultL = FindLocalVariable(expression.m_Data[0]);
+					resultR = Walk(expression.m_Children[0]);
+				}
+				Type& left = resultL.m_Type;
+				Type& right = resultR.m_Type;
+				ExpressionResult result;
+
+				switch (resultL.m_Category)
+				{
+					case ExpressionResult::Category::_Variable:
+					case ExpressionResult::Category::_PropertyAccess:
+					case ExpressionResult::Category::_IndexerAccess:
+						if (resultL.m_Type.Category == Type::rvalue)
+							AddMessage(wrong_left_assignment, {});
+						break;
+					default:
+						AddMessage(wrong_left_assignment, {});
+				}
+				if (!left.Dimensions.empty() || !right.Dimensions.empty())
+					AddMessage(no_arrays, {});
+				if (left.Class != nullptr && right.Class != nullptr)
+				{
+					switch (resultR.m_Category)
+					{
+						case ExpressionResult::Category::_Value:
+						case ExpressionResult::Category::_Variable:
+						case ExpressionResult::Category::_PropertyAccess:
+						case ExpressionResult::Category::_IndexerAccess:
+							break;
+						case ExpressionResult::Category::_Nothing:
+							AddMessage(void_conversion, { CreateName(left) }); break;
+							break;
+						case ExpressionResult::Category::_Namespace:
+							AddMessage(namespace_variable, { resultR.m_Name }); break;
+							break;
+						case ExpressionResult::Category::_Type:
+							AddMessage(type_not_allowed, { resultR.m_Name }); break;
+							break;
+						case ExpressionResult::Category::_MethodGroup:
+							AddMessage(method_group_to_type, { resultR.m_Name, CreateName(left) }); break;
+							break;
+					}
+
+					if (left.Class != right.Class)
+						if (!vm->GetImplicitConversion(right.Class, left.Class))
+							AddMessage(implicit_type_conversion, { CreateName(right), CreateName(left) });
+				}
+				result.m_Category = ExpressionResult::Category::_Value;
+				result.m_Type.Category = Type::rvalue;
+				result.m_Type.Class = left.Class;
+				return result;
+			}
 			default:
 			{
 				ExpressionResult result;
@@ -278,22 +401,43 @@ namespace Xias {
 		}
 	}
 
-	ExpressionResult& Compiler::WalkPrimary(std::vector<Expression>& expressions)
+	ExpressionResult Compiler::WalkPrimary(std::vector<Expression>& expressions)
 	{
 		ExpressionResult result;
 		result.m_Category = ExpressionResult::Category::_Nothing;
 		Type& ret = result.m_Type;
-		Member classMember;
+		std::shared_ptr<InfoHierarchyMember> info;
 		for (int i = 0; i < expressions.size(); i++)
 		{
 			Expression& expr = expressions[i];
 			switch (expr.m_Type)
 			{
+				case Expression::true_literal:
+				case Expression::false_literal:
+				case Expression::string_literal:
+				case Expression::verbatim_literal:
 				case Expression::integer_literal:
+				case Expression::unsigned_literal:
+				case Expression::float_literal:
+				case Expression::double_literal:
+				case Expression::null_literal:
 				{
-					ret.Class = intClass;
 					ret.Category = Type::rvalue;
 					result.m_Category = ExpressionResult::Category::_Value;
+					switch (expr.m_Type)
+					{
+						case Expression::true_literal: 
+						case Expression::false_literal: ret.Class = boolClass; break;
+						case Expression::string_literal: 
+						case Expression::verbatim_literal: ret.Class = stringClass; break;
+						case Expression::integer_literal: ret.Class = intClass; break;
+						case Expression::unsigned_literal: ret.Class = uintClass; break;
+						case Expression::float_literal: ret.Class = floatClass; break;
+						case Expression::double_literal: ret.Class = doubleClass; break;
+						case Expression::null_literal: ret.Class = objectClass;
+							result.m_Category = ExpressionResult::Category::_NullLiteral; break;
+					}
+					info = AssignInfo(ret.Class);
 					break;
 				}
 				case Expression::simple_name:
@@ -315,13 +459,15 @@ namespace Xias {
 						// if the declaration of T includes a type parameter with name I, then the
 						//		simple_name refers to that type parameter.
 
+					result.m_Name = expr.m_Data[0];
 					bool found = false;
-					for (int i = stack.size() - 1; i >= 0; i--)
+					for (int i = (int)stack.size() - 1; i >= 0; i--)
 					{
 						StackElementInfo& element = stack[i];
 						if (element.Name == expr.m_Data[0])
 						{
 							ret = element.ElementType;
+							info = AssignInfo(ret.Class);
 							ret.Category = Type::lvalue;
 							result.m_Category = ExpressionResult::Category::_Variable;
 							found = true;
@@ -329,18 +475,98 @@ namespace Xias {
 						}
 					}
 
+					size_t delimiter;
+					if ((delimiter = expr.m_Data[0].find("[")) != std::string::npos)
+					{
+						AddMessage(no_arrays, {});
+						info = nullptr;
+						found = true;
+						ret.Class = nullptr;
+						ret.Category = Type::lvalue;
+					}
 					if (!found)
 					{
-						ret.Class = vm->GetClass(expr.m_Data[0]);
-
+						std::shared_ptr<InfoHierarchyMember> memberInfo = vm->FindAccessibleMemberInfo(containingClass->Info, expr.m_Data[0]);
+						switch (memberInfo->m_Category)
+						{
+							case InfoHierarchyMember::Namespace:
+								result.m_Category = ExpressionResult::Category::_Namespace;
+								info = memberInfo;
+								break;
+							case InfoHierarchyMember::Class:
+								result.m_Category = ExpressionResult::Category::_Type;
+								info = memberInfo;
+								break;
+							case InfoHierarchyMember::Field:
+								result.m_Category = ExpressionResult::Category::_Variable;
+								info = memberInfo;
+								break;
+							case InfoHierarchyMember::Property:
+								result.m_Category = ExpressionResult::Category::_Value;
+								info = memberInfo;
+								break;
+							default:
+							case InfoHierarchyMember::NotFound:
+								result.m_Category = ExpressionResult::Category::_Nothing;
+								if (i + 1 < expressions.size() && expressions[i + 1].m_Type != Expression::primary_invocation)
+								{
+									info = nullptr;
+									AddMessage(no_type_or_namespace, { expr.m_Data[0] });
+								}
+								break;
+						}
+						ret.Class = memberInfo->m_Class;
 						ret.Category = Type::lvalue;
-						result.m_Category = ExpressionResult::Category::_Variable;
+						//x_class xClass = containingClass->Info;
+						//while (xClass)
+						//{
+						//	classMember = vm->GetMember(xClass, expr.m_Data[0]);
+						//	result.m_Type = CreateType(classMember.m_Data);
+						//	if (result.m_Type.Class == nullptr)
+						//		AddMessage(no_type_or_namespace, { classMember.m_Data });
+						//	switch (classMember.m_Type)
+						//	{
+						//	case Member::Category::Field:
+						//		result.m_Category = ExpressionResult::Category::_Variable;
+						//		break;
+						//	case Member::Category::Property:
+						//		result.m_Category = ExpressionResult::Category::_Value;
+						//		break;
+						//	case Member::Category::Method:
+						//		result.m_Category = ExpressionResult::Category::_MethodGroup;
+						//		break;
+						//	case Member::Category::Constructor:
+						//		AddMessage(unknown_error, {});
+						//		break;
+						//	case Member::Category::NotFound:
+						//		break;
+						//	}
+						//	if (classMember.m_Type != Member::Category::NotFound)
+						//	{
+						//		found = true;
+						//		break;
+						//	}
+						//	xClass = xClass->Parent;
+						//}
 					}
+					//if (!found)
+					//{
+					//	ret.Class = vm->GetClass(expr.m_Data[0]);
+					//	if (ret.Class)
+					//	{
+					//		ret.Category = Type::lvalue;
+					//		result.m_Category = ExpressionResult::Category::_Type;
+					//		found = true;
+					//	}
+					//}
+					//if (!found)
+					//	AddMessage(unknown_identifier, { expr.m_Data[0] });
 					break;
 				}
 				case Expression::parenthesized:
 				{
 					result = Walk(expr.m_Children[0]);
+					info = AssignInfo(ret.Class);
 					break;
 				}
 				case Expression::this_access:
@@ -348,6 +574,7 @@ namespace Xias {
 					ret.Class = containingClass;
 					ret.Category = Type::lvalue;
 					result.m_Category = ExpressionResult::Category::_Variable;
+					info = AssignInfo(ret.Class);
 					break;
 				}
 				case Expression::base_access:
@@ -357,90 +584,181 @@ namespace Xias {
 					ret.Class = containingClass->Parent;
 					ret.Category = Type::lvalue;
 					result.m_Category = ExpressionResult::Category::_Variable;
+					info = AssignInfo(ret.Class);
 					break;
 				}
 				case Expression::object_creation:
+				{
+					std::shared_ptr<InfoHierarchyMember> type = vm->FindAccessibleMemberInfo(containingClass->Info, expr.m_Data[0]);
+					bool found = false;
+					switch (type->m_Category)
+					{
+						case InfoHierarchyMember::Class:
+							found = true;
+							break;
+						case InfoHierarchyMember::Namespace:
+							AddMessage(namespace_not_type, { expr.m_Data[0] });
+							break;
+						case InfoHierarchyMember::NotFound:
+						default:
+							AddMessage(no_type_or_namespace, { expr.m_Data[0] });
+					}
+					ret.Class = type->m_Class;
+					ret.Category = Type::rvalue;
+					result.m_Category = ExpressionResult::Category::_Value;
+					info = AssignInfo(ret.Class);
+					if (found)
+					{
+						std::string sig = ";<>;";
+						if (!expr.m_Children.empty() && expr.m_Children[0].m_Type == Expression::argument_list)
+						{
+							for (auto& param : expr.m_Children[0].m_Children)
+							{
+								ExpressionResult paramResult = Walk(param);
+								sig += CreateName(paramResult.m_Type) + ';';
+							}
+						}
+						std::shared_ptr<InfoHierarchyMember> ctor = vm->FindMemberInfo(type, sig);
+						if (ctor->m_Category != InfoHierarchyMember::Constructor)
+							AddMessage(method_not_found, { sig });
+					}
 					break;
+				}
 				case Expression::typeof_expression:
 					break;
 				case Expression::default_value:
+				{
+					ret = CreateType(expr.m_Data[0]);
+					ret.Category = Type::rvalue;
+					result.m_Category = ExpressionResult::Category::_Value;
+					info = AssignInfo(ret.Class);
 					break;
+				}
 				case Expression::primary_member_access:
 				{
-					if (ret.Class != nullptr)
+					if (info && info->m_Category != InfoHierarchyMember::NotFound)
 					{
-						if (ret.Dimensions.size() == 0)
+						std::shared_ptr<InfoHierarchyMember> memberInfo = vm->FindMemberInfo(info, expr.m_Data[0]);
+						switch (memberInfo->m_Category)
 						{
-							classMember = vm->GetMember(ret.Class, expr.m_Data[0]);
-							result.m_Name = expr.m_Data[0];
+							case InfoHierarchyMember::Namespace:
+								result.m_Category = ExpressionResult::Category::_Namespace;
+								info = memberInfo;
+								break;
+							case InfoHierarchyMember::Class:
+								result.m_Category = ExpressionResult::Category::_Type;
+								info = memberInfo;
+								break;
+							case InfoHierarchyMember::Field:
+								result.m_Category = ExpressionResult::Category::_Variable;
+								info = memberInfo;
+								break;
+							case InfoHierarchyMember::Property:
+								result.m_Category = ExpressionResult::Category::_Value;
+								info = memberInfo;
+								break;
+							default:
+							case InfoHierarchyMember::NotFound:
+								result.m_Category = ExpressionResult::Category::_Nothing;
+								if (i + 1 < expressions.size() && expressions[i + 1].m_Type != Expression::primary_invocation)
+								{
+									info = nullptr;
+									AddMessage(no_type_or_namespace, { expr.m_Data[0] });
+								}
+								break;
 						}
-						else
-						{
-							//member = vm->GetMember(arrayClass, expr.m_Data[0]);
-						}
-
-						if (classMember.m_Type == Member::Category::NotFound)
-						{
-							AddMessage(12, { ret.Class->Name, expr.m_Data[0] });
-						}
-						else if (!MemberAccessible(containingClass->Name, classMember))
-						{
-							AddMessage(13, { expr.m_Data[0] });
-						}
-						else
-						{
-							switch (classMember.m_Type)
-							{
-								case Member::Category::Field:
-									result.m_Category = ExpressionResult::Category::_Variable;
-									break;
-								case Member::Category::Property:
-									result.m_Category = ExpressionResult::Category::_Value;
-									break;
-								case Member::Category::Method:
-									result.m_Category = ExpressionResult::Category::_MethodGroup;
-									break;
-								case Member::Category::Constructor:
-									AddMessage(unknown_error, {});
-									break;
-							}
-							ret = CreateType(classMember.m_Data);
-						}
+						ret.Class = memberInfo->m_Class;
+						ret.Category = Type::lvalue;
+						result.m_Name = expr.m_Data[0];
 					}
+					else
+					{
+						info = nullptr;
+						ret.Class = nullptr;
+						ret.Category = Type::lvalue;
+					}
+					//if (ret.Class != nullptr)
+					//{
+					//	if (ret.Dimensions.empty())
+					//	{
+					//		classMember = vm->GetMember(ret.Class, expr.m_Data[0]);
+					//		result.m_Name = expr.m_Data[0];
+					//	}
+					//	else
+					//	{
+					//		//member = vm->GetMember(arrayClass, expr.m_Data[0]);
+					//	}
+
+					//	if (classMember.m_Type == Member::Category::NotFound)
+					//	{
+					//		AddMessage(no_definition, { ret.Class->Name, expr.m_Data[0] });
+					//	}
+					//	else if (!MemberAccessible(containingClass->Name, classMember))
+					//	{
+					//		AddMessage(inaccessible, { expr.m_Data[0] });
+					//	}
+					//	else
+					//	{
+					//		switch (classMember.m_Type)
+					//		{
+					//			case Member::Category::Field:
+					//				result.m_Category = ExpressionResult::Category::_Variable;
+					//				break;
+					//			case Member::Category::Property:
+					//				result.m_Category = ExpressionResult::Category::_Value;
+					//				break;
+					//			case Member::Category::Method:
+					//				result.m_Category = ExpressionResult::Category::_MethodGroup;
+					//				break;
+					//			case Member::Category::Constructor:
+					//				AddMessage(unknown_error, {});
+					//				break;
+					//		}
+					//		ret = CreateType(classMember.m_Data);
+					//	}
+					//}
+					//else
+					//{
+					//	result.m_Name = "";
+					//}
 					break;
 				}
 				case Expression::primary_invocation:
 				{
-					//if (result.m_Category != ExpressionResult::Category::_MethodGroup)
-					//	AddMessage(member_not_method,
-					//		{ classMember.m_ContainingClass + '.' + classMember.m_Data });
-					//std::string signature = ';' + result.m_Name + ';';
-					//for (auto& param : expr.m_Children[0].m_Children)
-					//{
-					//	ExpressionResult& paramResult = Walk(param);
-					//	signature += CreateName(paramResult.m_Type) + ';';
-					//}
-					//std::string candidate = vm->CompleteSignature(signature);
-					//if (candidate == "")
-					//	AddMessage(method_not_found, { signature });
-
-					//result.m_Category = ExpressionResult::Category::_Value;
-					//ret = CreateType(classMember.m_Data);
-					if (result.m_Category != ExpressionResult::Category::_MethodGroup)
-						AddMessage(member_not_method,
-							{ classMember.m_ContainingClass + '.' + classMember.m_Data });
-					std::vector<Type> types;
-					for (auto& param : expr.m_Children[0].m_Children)
+					if (info)
 					{
-						ExpressionResult paramResult = Walk(param);
-						types.push_back(paramResult.m_Type);
-					}
-					OverloadResolution resolution = ResolveOverload(result.m_Name, types);
-					if (resolution.Return.Class == nullptr)
-						AddMessage(method_not_found, { resolution.GivenSignature });
+						bool isMethod = true;
+						switch (info->m_Category)
+						{
+							case InfoHierarchyMember::Namespace:
+							case InfoHierarchyMember::Field:
+							case InfoHierarchyMember::Property:
+								AddMessage(member_not_method,
+									{ *info->m_Parent->m_Name + '.' + *info->m_Name });
+								isMethod = false;
+							default:
+							case InfoHierarchyMember::Class:
+								break;
+						}
 
-					result.m_Category = ExpressionResult::Category::_Value;
-					ret = resolution.Return;
+						if (isMethod)
+						{
+							if (!ret.Class) ret.Class = info->m_Class;
+							std::vector<Type> types;
+							for (auto& param : expr.m_Children[0].m_Children)
+							{
+								ExpressionResult paramResult = Walk(param);
+								types.push_back(paramResult.m_Type);
+							}
+							OverloadResolution resolution = ResolveOverload(result.m_Name, types);
+							if (resolution.Return.Class == nullptr)
+								AddMessage(method_not_found, { resolution.GivenSignature });
+
+							result.m_Category = ExpressionResult::Category::_Value;
+							result.m_Type.Category = Type::rvalue;
+							ret = resolution.Return;
+						}
+					}
 					break;
 				}
 				case Expression::primary_element_access:
@@ -448,16 +766,20 @@ namespace Xias {
 				case Expression::primary_post_increment:
 				case Expression::primary_post_decrement:
 				{
-					if (result.m_Category != ExpressionResult::Category::_Variable)
-						AddMessage(member_not_method, // TODO: fix
-							{ classMember.m_ContainingClass + '.' + classMember.m_Data });
-					
-					OverloadResolution resolution = ResolveOverload(expr.m_Data[0], { result.m_Type });
-					if (resolution.Return.Class == nullptr)
-						AddMessage(wrong_unary_operator, { expr.m_Data[0], CreateName(result.m_Type) });
-					
-					result.m_Category = ExpressionResult::Category::_Value;
-					ret = resolution.Return;
+					//if (result.m_Category != ExpressionResult::Category::_Variable)
+					//	AddMessage(wrong_left_operand,
+					//		{ classMember.m_ContainingClass + '.' + classMember.m_Data });
+					//
+					//OverloadResolution resolution = ResolveOverload(expr.m_Data[0], { result.m_Type });
+					//if (resolution.Return.Class == nullptr)
+					//	AddMessage(wrong_unary_operator, { expr.m_Data[0], CreateName(result.m_Type) });
+					//
+					//result.m_Category = ExpressionResult::Category::_Value;
+					//ret = resolution.Return;
+				}
+				default:
+				{
+					AddMessage(unknown_error, { });
 				}
 			}
 		}
@@ -1009,6 +1331,14 @@ namespace Xias {
 		return result;
 	}
 
+	std::shared_ptr<InfoHierarchyMember> Compiler::AssignInfo(x_class xClass)
+	{
+		if (xClass != nullptr)
+			return xClass->Info;
+		else
+			return nullptr;
+	}
+
 	// This doesn't work because a class's implicit cast list is not all of them since other classes could contain their own
 	// for example
 	/*
@@ -1086,10 +1416,12 @@ namespace Xias {
 		candidateTypes.resize(givenTypes.size());
 		result.GivenSignature = ';' + methodName + ';';
 		for (int i = 0; i < givenTypes.size(); i++)
+			result.GivenSignature += GetTypeInitial(CreateName(givenTypes[i]));
+
+		for (int i = 0; i < givenTypes.size(); i++)
 		{
 			if (givenTypes[i].Class == nullptr)
 				return result;
-			result.GivenSignature += CreateName(givenTypes[i]) + ';';
 			candidateTypes[i].emplace_back(givenTypes[i]);
 		}
 
@@ -1112,12 +1444,10 @@ namespace Xias {
 		indexes.resize(givenTypes.size());
 		while (true)
 		{
-			std::string candidateName = methodName + ';';
+			std::string candidateName = ';' + methodName + ';';
 			for (int i = 0; i < candidateTypes.size(); i++)
-			{
-				candidateName += CreateName(candidateTypes[i][indexes[i]]);
-				candidateName += ';';
-			}
+				candidateName += CreateName(candidateTypes[i][indexes[i]]) + ';';
+
 			std::string candidate = vm->CompleteSignature(candidateName);
 			if (!candidate.empty())
 			{
@@ -1127,6 +1457,8 @@ namespace Xias {
 					if (i > 0) score++;
 				methodScores.emplace_back(score);
 			}
+			if (indexes.empty())
+				break;
 			indexes[0]++;
 			bool exhausted = false;
 			for (int i = 0; i < indexes.size(); i++)
@@ -1185,10 +1517,27 @@ namespace Xias {
 		}
 	}
 
+	ExpressionResult Compiler::FindLocalVariable(const std::string& name)
+	{
+		ExpressionResult result;
+		for (StackElementInfo& element : stack)
+		{
+			if (element.Name == name)
+			{
+				result.m_Category = ExpressionResult::_Variable;
+				result.m_Name = name;
+				result.m_Type = element.ElementType;
+				return result;
+			}
+		}
+		result.m_Category = ExpressionResult::_Nothing;
+		return result;
+	}
+
 	void Compiler::ObliterateScope()
 	{
 		currentScopeDepth--;
-		for (int i = stack.size() - 1; i >= 0; i--)
+		for (int i = (int)stack.size() - 1; i >= 0; i--)
 		{
 			StackElementInfo& element = stack[i];
 			if (element.ScopeDepth > currentScopeDepth)
@@ -1199,16 +1548,4 @@ namespace Xias {
 				return;
 		}
 	}
-
-	CompilationPass::CompilationPass(Vm* xvm)
-	{
-		XVM = xvm;
-	}
-
-	void CompilationPass::SetClass(ClassInfo& cInfo, x_class xClass)
-	{
-		m_CInfo = &cInfo;
-		m_XClass = xClass;
-	}
-
 }

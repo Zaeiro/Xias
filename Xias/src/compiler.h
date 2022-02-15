@@ -31,12 +31,12 @@ namespace Xias {
 	public:
 		Compiler();
 		Compiler(Vm* vm);
-		std::vector<CompilationMessage> Compile(x_class xclass, x_method method, Statement& statement);
+		std::vector<CompilationMessage> Compile(x_class xclass, x_method method, const std::vector<ParameterInfo>& parameters, Statement& statement);
 	private:
 		void StaticCheck(Statement& statement);
 		void Walk(Statement& statement);
-		ExpressionResult& Walk(Expression& expression);
-		ExpressionResult& WalkPrimary(std::vector<Expression>& expressions);
+		ExpressionResult Walk(Expression& expression);
+		ExpressionResult WalkPrimary(std::vector<Expression>& expressions);
 		void CreateDAG(Statement& statement);
 		//std::string Compilea(Vm* vm, const Expression& expression, x_method method);
 		//void Compilea(Vm* vm, const Statement& statement, x_method method);
@@ -45,10 +45,12 @@ namespace Xias {
 		void AddMessage(x_ulong errorID, std::vector<std::string> params);
 		std::string CreateName(const Type& type);
 		Type CreateType(const std::string& type);
+		std::shared_ptr<InfoHierarchyMember> AssignInfo(x_class xClass);
 		x_method FindMethod(std::string name, Type& left, Type& right);
 		//OverloadResolution ResolveOverload(const std::string& methodName, std::vector<Type> givenTypes);
 		OverloadResolution ResolveOverload(const std::string& methodName, std::vector<Type> givenTypes);
 		bool MemberAccessible(const std::string& containingClass, Member& member);
+		ExpressionResult FindLocalVariable(const std::string& name);
 		void ObliterateScope();
 	public:
 		x_class containingClass = nullptr;
@@ -66,17 +68,4 @@ namespace Xias {
 		std::vector<StackElementInfo> stack;
 		int currentScopeDepth = 0;
 	};
-
-	class CompilationPass
-	{
-	public:
-		CompilationPass(Vm* xvm);
-
-		virtual void SetClass(ClassInfo& cInfo, x_class xClass);
-	private:
-		Vm* XVM = nullptr;
-		ClassInfo* m_CInfo = nullptr;
-		x_class m_XClass = nullptr;
-	};
-
 }

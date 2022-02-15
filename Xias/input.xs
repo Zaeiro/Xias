@@ -4,6 +4,8 @@ static class Math
     {
         return 1;
     }
+
+    public int 9() {}
 }
 
 namespace Woah
@@ -20,7 +22,6 @@ namespace Woah
 new public static class Apple
 {
     private readonly int pug = 2, bear, nun = 3;
-    protected static Pogger champ = 0, pumpkin;
 
     public ExampleClass example;
 
@@ -30,7 +31,7 @@ new public static class Apple
         pug = 45;
         this.pug = 22;
         example.stong = "yello";
-        Math.PlusOne(1 + 2, 3, pug, "");
+        Math.PlusOne(VeryCoolFunction(1), 3, pug, "");
         Math.PlusOne("");
         return 3 == 1 ? (int)champ : Math.PlusOne(not);
     }
@@ -47,8 +48,22 @@ public class ExampleClass
     public int ReallyCoolNumber = 42;
     protected String stong = new String();
 
+    public static implicit operator ExampleClass(embeddedClass t)
+    {
+        return new ExampleClass();
+    }
+    public static implicit operator bool(embeddedClass t)
+    {
+        return false;
+    }
     public class embeddedClass
     {
         public int aaa;
+        private readonly int pug = 2, bear, nun = 3;
+
+        public static implicit operator ExampleClass(embeddedClass t)
+        {
+            return new ExampleClass();
+        }
     }
 }

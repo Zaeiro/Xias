@@ -41,7 +41,9 @@ namespace Xias {
 
 		std::unordered_map<std::string, x_ulong> m_ClassNames;
 		std::vector<x_class> m_Classes;
+		std::vector<x_class> m_ClassesToRemove;
 		std::unordered_map<std::string, ClassCompilationInfo> m_ClassInfo;
+		std::shared_ptr<InfoHierarchyMember> m_GlobalNamespace;
 
 		std::vector<x_object*> m_GrayStack;
 		x_object* m_Objects = nullptr;
@@ -51,6 +53,8 @@ namespace Xias {
 		size_t m_BytesAllocated;
 		size_t m_NextGC;
 
+		size_t m_CurrentCompilationUnit = 0;
+		std::vector<CompilationMessage> m_Messages;
 		std::vector<CompilationUnit> m_CompilationUnits;
 		Compiler m_Compiler;
 	public:
@@ -71,7 +75,20 @@ namespace Xias {
 
 		void AddGlobal(const std::string& name, Value& value);
 		Value GetGlobal(const std::string& name);
-		
+
+		// Traverses downards only
+		std::shared_ptr<InfoHierarchyMember> FindInfo(const std::string& qualifiedName, size_t compilationUnitID = -1);
+		// Traverses downards only
+		std::shared_ptr<InfoHierarchyMember> FindInfo(std::shared_ptr<std::string> qualifiedName, size_t compilationUnitID = -1);
+		// Does not traverse the hierarchy
+		std::shared_ptr<InfoHierarchyMember> FindMemberInfo(std::shared_ptr<InfoHierarchyMember> info, std::string_view name, size_t compilationUnitID = -1);
+		// Traverses upwards and downwards
+		std::shared_ptr<InfoHierarchyMember> FindAccessibleMemberInfo(std::shared_ptr<InfoHierarchyMember> info, std::string_view name, size_t compilationUnitID = -1);
+		std::vector<std::string_view> SplitQualifiedName(std::shared_ptr<std::string> name);
+		std::vector<std::string_view> SplitQualifiedName(std::string_view name);
+		std::vector<std::string_view> SplitViewSignature(std::string_view signature);
+		std::vector<std::string_view> QualifyInfo(std::shared_ptr<InfoHierarchyMember> info);
+
 		x_class GetClass(const std::string& name);
 		//MemberInfo GetMemberInfo(const std::string& xClass, const std::string& name);
 		Member GetMember(x_class xClass, const std::string& name);
@@ -173,13 +190,15 @@ namespace Xias {
 #endif
 			x_method method = ((InstanceObject*)(object))->Class->Functions[id];
 
-			push(method);
-			push({ args... });
+			push(Value{ (x_object*)method });
+			push({ Value{ args }... });
 
 			CallFunction(method);
 			return Run();
 		}
 	private:
+		void AddMessage(std::shared_ptr<InfoHierarchyMember> origin, x_ulong errorID, std::vector<std::string> params);
+		bool LogMessages();
 		bool LogMessages(std::vector<CompilationMessage>& messages);
 		void LogMessage(CompilationMessage& message);
 		void Error(const char* msg);
@@ -187,15 +206,20 @@ namespace Xias {
 		void CompilationError(x_class xClass, const char* msg);
 		void CompilationError(x_class xClass, const std::string& msg);
 
-		void RegisterClass(const ClassInfo& classInfo);
-		void SetParent(const ClassInfo& classInfo);
+		void RegisterClass(ClassInfo& classInfo);
+		void SetParent(ClassInfo& classInfo);
 		void CompileClass(ClassInfo& classInfo);
 		void AddField(x_class xClass, const std::string& name);
 		x_ulong FindField(x_class xClass, const std::string& name);
 		void AddMethod(x_class xClass, x_method method);
 		void AddImplicitCast(x_class xClass, x_method method);
-		bool Compile(x_class xClass, x_method method, Statement& block);
+		bool Compile(x_class xClass, x_method method, const std::vector<ParameterInfo>& parameters, Statement& block);
 		void GenerateClassInfo(const CompilationUnit& unit);
+		void AddNamespace(std::shared_ptr<InfoHierarchyMember> parent, const NamespaceInfo& info);
+		std::shared_ptr<InfoHierarchyMember> AddInfo(std::shared_ptr<InfoHierarchyMember> parent,
+			std::shared_ptr<std::string> name, InfoHierarchyMember::Category category);
+		std::shared_ptr<InfoHierarchyMember> FindInfoImpl(std::shared_ptr<InfoHierarchyMember> parent, std::vector<std::string_view> names, size_t compilationUnitID = -1);
+		std::shared_ptr<std::string> QualifySignature(std::shared_ptr<InfoHierarchyMember> owner, const std::string& signature, size_t compilationUnitID = -1);
 		//void CompileField(x_ulong fieldID, const FieldInfo& fieldInfo, x_method method);
 		//x_method CompileStatement(const Statement& statement);
 		//void CompileStatement(const Statement& statement, x_method method);
@@ -231,11 +255,13 @@ namespace Xias {
 		VoidNativeObject* NewVoidNative(VoidNativeFn function);
 
 		x_class AddClass(const std::string& name);
+		void MarkClassForRemoval(x_class xClass);
+		bool RemoveClasses();
 		void RemoveClass(x_class xClass);
 
 		void CallFunction(FunctionObject* function);
 
-		void push(Value& value);
+		void push(Value value);
 
 		Value RunMethod(x_method method);
 		Value Run();

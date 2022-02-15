@@ -22,7 +22,7 @@ int main()
 	// test_vm();
 
 	Xias::Vm xvm;
-	xvm.Compile("input.xs");
+	xvm.Compile("conditional.xs");
 
 	//std::ifstream stream;
 	//stream.open("input.xs");

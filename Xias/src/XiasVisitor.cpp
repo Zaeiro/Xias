@@ -1,5 +1,6 @@
 #include "XiasVisitor.h"
 
+#include "messages.h"
 #include "compilation_unit.h"
 #include "types.h"
 
@@ -11,9 +12,9 @@ using namespace Xias;
 	m_StatementStack.emplace(statement); \
 	statement->m_Type = Statement::type; \
 	SetLine(ctx, statement); \
-	auto& ret = visitChildren(ctx); \
+	visitChildren(ctx); \
 	m_StatementStack.pop(); \
-	return ret; \
+	return nullptr; \
 } while (0)
 
 static std::vector<bool> ClassModifiers = { true, true, true, true, true, false, true, false, true, false, true };
@@ -37,12 +38,108 @@ static std::unordered_map<std::string, int> ModifierID = {
 	{"extern", 10}
 };
 
+static std::unordered_set<std::string> RestrictedNames = {
+	"I",
+	"U",
+	"D",
+	"F",
+	"B",
+	"S",
+	"O",
+	"V",
+	//"abstract",
+	//"as",
+	//"is",
+	//"base",
+	//"bool",
+	//"break",
+	//"case",
+	//"catch",
+	//"char",
+	//"class",
+	//"const",
+	//"continue",
+	//"default",
+	//"do",
+	//"double",
+	//"else",
+	//"enum",
+	//"extern",
+	//"explicit",
+	//"false",
+	//"finally",
+	//"float",
+	//"for",
+	//"foreach",
+	//"get",
+	//"goto",
+	//"if",
+	//"implicit",
+	//"in",
+	//"int",
+	//"interface",
+	//"internal",
+	//"nameof",
+	//"namespace",
+	//"new",
+	//"null",
+	//"object",
+	//"operator",
+	//"out",
+	//"override",
+	//"params",
+	//"private",
+	//"protected",
+	//"public",
+	//"readonly",
+	//"ref",
+	//"return",
+	//"sealed",
+	//"set",
+	//"sizeof",
+	//"static",
+	//"string",
+	//"switch",
+	//"this",
+	//"throw",
+	//"true",
+	//"try",
+	//"typeof",
+	//"uint",
+	//"using",
+	//"var",
+	//"virtual",
+	//"void",
+	//"when",
+	//"where",
+	//"while",
+	"",
+};
+
 antlrcpp::Any XiasVisitor::visitCompilation_unit(XiasParser::Compilation_unitContext* ctx)
 {
-	CompilationUnit cUnit;
-	m_cInfo = &cUnit;
-	m_NamespaceInfo = &cUnit.m_GlobalNamespace;
+	std::shared_ptr<CompilationUnit> cUnit = std::make_shared<CompilationUnit>();
+	cUnit->m_GlobalNamespace = std::make_shared<NamespaceInfo>();
+	m_cInfo = cUnit.get();
+	m_NamespaceInfo = cUnit->m_GlobalNamespace;
 	visitChildren(ctx);
+
+	for (ClassInfo& klass : cUnit->m_Classes)
+	{
+		for (MethodInfo& mInfo : klass.m_Methods)
+		{
+			CheckParameters(mInfo.m_Location, mInfo.m_Parameters);
+		}
+		for (ConstructorInfo& mInfo : klass.m_Constructors)
+		{
+			CheckParameters(mInfo.m_Location, mInfo.m_Parameters);
+		}
+		for (CastOperatorInfo& mInfo : klass.m_Casts)
+		{
+			CheckParameters(mInfo.m_Location, mInfo.m_Parameters);
+		}
+	}
+
     return cUnit;
 }
 
@@ -51,15 +148,16 @@ antlrcpp::Any XiasVisitor::visitUsingNamespaceDirective(XiasParser::UsingNamespa
 	UsingInfo uInfo;
 	uInfo.Using = ctx->namespace_or_type_name()->getText();
 	m_cInfo->m_Usings.emplace_back(uInfo);
-	return visitChildren(ctx);
+	visitChildren(ctx);
+	return nullptr;
 }
 
 antlrcpp::Any XiasVisitor::visitNamespace_declaration(XiasParser::Namespace_declarationContext* ctx)
 {
 	int namespaceCount = AddNamespaces(ctx->qi->getText());
-	antlrcpp::Any& result = visitNamespace_body(ctx->namespace_body());
+	visitNamespace_body(ctx->namespace_body());
 	RemoveNamespaces(namespaceCount);
-	return result;
+	return nullptr;
 }
 
 antlrcpp::Any XiasVisitor::visitClass_declaration(XiasParser::Class_declarationContext* ctx)
@@ -90,7 +188,11 @@ antlrcpp::Any XiasVisitor::visitClass_declaration(XiasParser::Class_declarationC
 
 	cInfo->m_Name = ctx->identifier()->getText();
 	cInfo->m_QualifiedName = CreateQualifiedName(cInfo->m_Name);
+	cInfo->m_Location = lInfo;
 	m_NamespaceInfo->m_Classes.emplace_back(cInfo->m_Name);
+
+	if (RestrictedNames.find(cInfo->m_Name) != RestrictedNames.end())
+		AddMessage(lInfo, restricted_class_name, { cInfo->m_Name });
 
 	// Base classes
 	auto base = ctx->class_base();
@@ -106,7 +208,7 @@ antlrcpp::Any XiasVisitor::visitClass_declaration(XiasParser::Class_declarationC
 
 	m_ClassStack.push(m_cInfo->m_Classes.size() - 1);
 	AddQualifiers(cInfo->m_Name);
-	antlrcpp::Any& result = visitClass_body(ctx->class_body());
+	visitClass_body(ctx->class_body());
 	RemoveQualifiers(1);
 	m_ClassStack.pop();
 
@@ -171,7 +273,7 @@ antlrcpp::Any XiasVisitor::visitClass_declaration(XiasParser::Class_declarationC
 	//	}
 	//}
 
-	return result;
+	return nullptr;
 }
 
 antlrcpp::Any XiasVisitor::visitField_declaration(XiasParser::Field_declarationContext* ctx)
@@ -220,7 +322,7 @@ antlrcpp::Any XiasVisitor::visitField_declaration(XiasParser::Field_declarationC
 		index++;
 	}
 
-	return antlrcpp::Any();
+	return nullptr;
 }
 
 antlrcpp::Any XiasVisitor::visitMethod_declaration(XiasParser::Method_declarationContext* ctx)
@@ -233,10 +335,9 @@ antlrcpp::Any XiasVisitor::visitMethod_declaration(XiasParser::Method_declaratio
 	mInfo.m_Body = CreateStatement(ctx->method_body()->block());
 	mInfo.m_Type = header->return_type()->getText();
 	mInfo.m_Name = header->member_name()->getText();
-	mInfo.m_Signature = GetTypeInitial(mInfo.m_Type);
+	mInfo.m_Signature = mInfo.m_Type + ';';
 	mInfo.m_Signature += mInfo.m_Name + ';';
 	SetLine(ctx, &mInfo.m_Location);
-
 	auto parameters = header->formal_parameter_list();
 	if (parameters)
 	{
@@ -247,7 +348,7 @@ antlrcpp::Any XiasVisitor::visitMethod_declaration(XiasParser::Method_declaratio
 			if (auto defaultArg = parameter->default_argument())
 				pInfo.m_Default = CreateExpression(defaultArg->expression());
 			pInfo.m_Type = parameter->type_()->getText();
-			mInfo.m_Signature += GetTypeInitial(pInfo.m_Type);
+			mInfo.m_Signature += pInfo.m_Type + ';';
 		}
 	}
 
@@ -310,9 +411,14 @@ antlrcpp::Any XiasVisitor::visitOperator_declaration(XiasParser::Operator_declar
 			auto types = header->type_();
 			mInfo.m_Type = types[0]->getText();
 			mInfo.m_Name = header->overloadable_unary_operator()->getText();
-			mInfo.m_Signature = GetTypeInitial(mInfo.m_Type);
+			mInfo.m_Signature = mInfo.m_Type + ';';
 			mInfo.m_Signature += mInfo.m_Name + ';';
-			mInfo.m_Signature += GetTypeInitial(types[1]->getText());
+			mInfo.m_Signature += types[1]->getText() + ';';
+
+			ParameterInfo& pInfo = mInfo.m_Parameters.emplace_back();
+			pInfo.m_Name = header->identifier()->getText();
+			pInfo.m_Type = types[1]->getText();
+
 			signature = mInfo.m_Signature;
 			name = mInfo.m_Name;
 			mInfo.m_Location = location;
@@ -328,10 +434,18 @@ antlrcpp::Any XiasVisitor::visitOperator_declaration(XiasParser::Operator_declar
 			auto types = header->type_();
 			mInfo.m_Type = types[0]->getText();
 			mInfo.m_Name = header->overloadable_binary_operator()->getText();
-			mInfo.m_Signature = GetTypeInitial(mInfo.m_Type);
+			mInfo.m_Signature = mInfo.m_Type + ';';
 			mInfo.m_Signature += mInfo.m_Name + ';';
-			mInfo.m_Signature += GetTypeInitial(types[1]->getText());
-			mInfo.m_Signature += GetTypeInitial(types[2]->getText());
+			mInfo.m_Signature += types[1]->getText() + ';';
+			mInfo.m_Signature += types[2]->getText() + ';';
+
+			ParameterInfo& pInfo = mInfo.m_Parameters.emplace_back();
+			pInfo.m_Name = header->identifier()[1]->getText();
+			pInfo.m_Type = types[1]->getText();
+			ParameterInfo& pInfo2 = mInfo.m_Parameters.emplace_back();
+			pInfo2.m_Name = header->identifier()[2]->getText();
+			pInfo2.m_Type = types[2]->getText();
+
 			signature = mInfo.m_Signature;
 			name = mInfo.m_Name;
 			mInfo.m_Location = location;
@@ -346,12 +460,16 @@ antlrcpp::Any XiasVisitor::visitOperator_declaration(XiasParser::Operator_declar
 			mInfo.m_Body = CreateStatement(ctx->operator_body()->block());
 			auto types = header->type_();
 			mInfo.m_Name = "()";
-			mInfo.m_Signature = GetTypeInitial(types[0]->getText());
+			mInfo.m_Signature = types[0]->getText() + ';';
 			mInfo.m_Signature += mInfo.m_Name + ';';
-			mInfo.m_Signature += GetTypeInitial(types[1]->getText());
+			mInfo.m_Signature += types[1]->getText() + ';';
 			signature = mInfo.m_Signature;
 			name = mInfo.m_Name;
 			mInfo.m_Location = location;
+
+			ParameterInfo& pInfo = mInfo.m_Parameters.emplace_back();
+			pInfo.m_Name = header->identifier()->getText();
+			pInfo.m_Type = types[1]->getText();
 
 			switch (header->getAltNumber())
 			{
@@ -365,17 +483,35 @@ antlrcpp::Any XiasVisitor::visitOperator_declaration(XiasParser::Operator_declar
 	bool addMember = true;
 	for (MemberInfo& memberInfo : cInfo->m_Members)
 	{
-		if (memberInfo.m_Name == name && memberInfo.m_Signature.empty())
+		if (memberInfo.m_Name == name)
 		{
-			AddMessage(location, 4, { cInfo->m_QualifiedName, name });
-			addMember = false;
-			break;
+			// Not sure what these differences are for
+			if (memberInfo.m_Signature.empty())
+			{
+				AddMessage(location, 4, { cInfo->m_QualifiedName, name });
+				addMember = false;
+				break;
+			}
+			else
+			{
+				//std::string_view leftName, rightName;
+				//size_t delimiter;
+				//if ((delimiter = memberInfo.m_Name.find(";")) != std::string::npos)
+				//	leftName = std::string_view(memberInfo.m_Name.c_str(), delimiter);
+				//if ((delimiter = name.find(";")) != std::string::npos)
+				//	rightName = std::string_view(name.c_str(), delimiter);
+				//if (leftName == rightName)
+				//{
+				//	AddMessage(location, 4, { cInfo->m_QualifiedName, name });
+
+				//}
+			}
 		}
 		else
 		{
 			if (memberInfo.m_Signature == signature)
 			{
-				AddMessage(location, 5, { cInfo->m_QualifiedName, name });
+				AddMessage(location, defined_same_parameters, { cInfo->m_QualifiedName, name });
 				addMember = false;
 				break;
 			}
@@ -424,10 +560,9 @@ antlrcpp::Any XiasVisitor::visitOperator_declaration(XiasParser::Operator_declar
 	//	mInfo.m_Name += GetTypeInitial(pInfo.m_Type);
 	//}
 
-	return antlrcpp::Any();
+	return nullptr;
 }
 
-// TODO: Error when header->identifier() is not the containing class
 antlrcpp::Any XiasVisitor::visitConstructor_declaration(XiasParser::Constructor_declarationContext* ctx)
 {
 	ClassInfo* cInfo = &m_cInfo->m_Classes[m_ClassStack.top()];
@@ -439,6 +574,11 @@ antlrcpp::Any XiasVisitor::visitConstructor_declaration(XiasParser::Constructor_
 	mInfo.m_Signature = ";<>;";
 	SetLine(ctx, &mInfo.m_Location);
 
+	if (header->identifier()->getText() != cInfo->m_Name)
+	{
+		AddMessage(mInfo.m_Location, missing_return_type, {});
+	}
+
 	auto parameters = header->formal_parameter_list();
 	if (parameters)
 	{
@@ -449,7 +589,7 @@ antlrcpp::Any XiasVisitor::visitConstructor_declaration(XiasParser::Constructor_
 			if (auto defaultArg = parameter->default_argument())
 				pInfo.m_Default = CreateExpression(defaultArg->expression());
 			pInfo.m_Type = parameter->type_()->getText();
-			mInfo.m_Signature += GetTypeInitial(pInfo.m_Type);
+			mInfo.m_Signature += pInfo.m_Type + ';';
 		}
 	}
 
@@ -472,12 +612,13 @@ antlrcpp::Any XiasVisitor::visitConstructor_declaration(XiasParser::Constructor_
 		newMemberInfo.m_Signature = mInfo.m_Signature;
 	}
 
-	return antlrcpp::Any();
+	return nullptr;
 }
 
 antlrcpp::Any XiasVisitor::visitExpression(XiasParser::ExpressionContext* ctx)
 {
-	return visitChildren(ctx);
+	visitChildren(ctx);
+	return nullptr;
 }
 
 antlrcpp::Any XiasVisitor::visitBoolean_expression(XiasParser::Boolean_expressionContext* ctx)
@@ -487,14 +628,15 @@ antlrcpp::Any XiasVisitor::visitBoolean_expression(XiasParser::Boolean_expressio
 	m_ExpressionStack.emplace(expression);
 	expression->m_Type = Expression::boolean_expression;
 	SetLine(ctx, expression);
-	auto& ret = visitChildren(ctx);
+	visitChildren(ctx);
 	m_ExpressionStack.pop();
-	return ret;
+	return nullptr;
 }
 
 antlrcpp::Any XiasVisitor::visitNon_assignment_expression(XiasParser::Non_assignment_expressionContext* ctx)
 {
-	return visitChildren(ctx);
+	visitChildren(ctx);
+	return nullptr;
 }
 
 antlrcpp::Any XiasVisitor::visitConditional_expression(XiasParser::Conditional_expressionContext* ctx)
@@ -509,14 +651,15 @@ antlrcpp::Any XiasVisitor::visitConditional_expression(XiasParser::Conditional_e
 			m_ExpressionStack.emplace(expression);
 			expression->m_Type = Expression::conditional_expression;
 			SetLine(ctx, expression);
-			auto& ret = visitChildren(ctx);
+			visitChildren(ctx);
 			m_ExpressionStack.pop();
-			return ret;
+			return nullptr;
 		}
 		default:
 		{
 			std::cerr << "Unknown modifier type!\n";
-			return visitChildren(ctx);;
+			visitChildren(ctx);
+			return nullptr;
 			// TODO: Real errors
 		}
 	}
@@ -526,7 +669,9 @@ antlrcpp::Any XiasVisitor::visitNull_coalescing_expression(XiasParser::Null_coal
 {
 	switch (ctx->getAltNumber())
 	{
-		case 1: return visitChildren(ctx);
+		case 1:
+			visitChildren(ctx);
+			return nullptr;
 		case 2:
 		{
 			Expression* expression;
@@ -534,14 +679,15 @@ antlrcpp::Any XiasVisitor::visitNull_coalescing_expression(XiasParser::Null_coal
 			m_ExpressionStack.emplace(expression);
 			expression->m_Type = Expression::null_coalescing_expression;
 			SetLine(ctx, expression);
-			auto& ret = visitChildren(ctx);
+			visitChildren(ctx);
 			m_ExpressionStack.pop();
-			return ret;
+			return nullptr;
 		}
 		default:
 		{
 			std::cerr << "Unknown modifier type!\n";
-			return visitChildren(ctx);;
+			visitChildren(ctx);
+			return nullptr;
 			// TODO: Real errors
 		}
 	}
@@ -556,12 +702,12 @@ antlrcpp::Any XiasVisitor::visitConditional_or_expression(XiasParser::Conditiona
 		m_ExpressionStack.emplace(expression);
 		expression->m_Type = Expression::conditional_or_expression;
 		SetLine(ctx, expression);
-		auto& ret = visitChildren(ctx);
+		visitChildren(ctx);
 		m_ExpressionStack.pop();
-		return ret;
+		return nullptr;
 	}
-	else
-		return visitChildren(ctx);
+	visitChildren(ctx);
+	return nullptr;
 }
 
 antlrcpp::Any XiasVisitor::visitConditional_and_expression(XiasParser::Conditional_and_expressionContext* ctx)
@@ -573,12 +719,12 @@ antlrcpp::Any XiasVisitor::visitConditional_and_expression(XiasParser::Condition
 		m_ExpressionStack.emplace(expression);
 		expression->m_Type = Expression::conditional_and_expression;
 		SetLine(ctx, expression);
-		auto& ret = visitChildren(ctx);
+		visitChildren(ctx);
 		m_ExpressionStack.pop();
-		return ret;
+		return nullptr;
 	}
-	else
-		return visitChildren(ctx);
+	visitChildren(ctx);
+	return nullptr;
 }
 
 antlrcpp::Any XiasVisitor::visitInclusive_or_expression(XiasParser::Inclusive_or_expressionContext* ctx)
@@ -590,12 +736,12 @@ antlrcpp::Any XiasVisitor::visitInclusive_or_expression(XiasParser::Inclusive_or
 		m_ExpressionStack.emplace(expression);
 		expression->m_Type = Expression::inclusive_or_expression;
 		SetLine(ctx, expression);
-		auto& ret = visitChildren(ctx);
+		visitChildren(ctx);
 		m_ExpressionStack.pop();
-		return ret;
+		return nullptr;
 	}
-	else
-		return visitChildren(ctx);
+	visitChildren(ctx);
+	return nullptr;
 }
 
 antlrcpp::Any XiasVisitor::visitExclusive_or_expression(XiasParser::Exclusive_or_expressionContext* ctx)
@@ -607,12 +753,12 @@ antlrcpp::Any XiasVisitor::visitExclusive_or_expression(XiasParser::Exclusive_or
 		m_ExpressionStack.emplace(expression);
 		expression->m_Type = Expression::exclusive_or_expression;
 		SetLine(ctx, expression);
-		auto& ret = visitChildren(ctx);
+		visitChildren(ctx);
 		m_ExpressionStack.pop();
-		return ret;
+		return nullptr;
 	}
-	else
-		return visitChildren(ctx);
+	visitChildren(ctx);
+	return nullptr;
 }
 
 antlrcpp::Any XiasVisitor::visitAnd_expression(XiasParser::And_expressionContext* ctx)
@@ -624,12 +770,12 @@ antlrcpp::Any XiasVisitor::visitAnd_expression(XiasParser::And_expressionContext
 		m_ExpressionStack.emplace(expression);
 		expression->m_Type = Expression::and_expression;
 		SetLine(ctx, expression);
-		auto& ret = visitChildren(ctx);
+		visitChildren(ctx);
 		m_ExpressionStack.pop();
-		return ret;
+		return nullptr;
 	}
-	else
-		return visitChildren(ctx);
+	visitChildren(ctx);
+	return nullptr;
 }
 
 antlrcpp::Any XiasVisitor::visitEquality_expression(XiasParser::Equality_expressionContext* ctx)
@@ -641,9 +787,9 @@ antlrcpp::Any XiasVisitor::visitEquality_expression(XiasParser::Equality_express
 		m_ExpressionStack.emplace(expression);
 		expression->m_Type = Expression::equality_expression_EQ;
 		SetLine(ctx, expression);
-		auto& ret = visitChildren(ctx);
+		visitChildren(ctx);
 		m_ExpressionStack.pop();
-		return ret;
+		return nullptr;
 	}
 	else if (ctx->OP_NE())
 	{
@@ -652,12 +798,12 @@ antlrcpp::Any XiasVisitor::visitEquality_expression(XiasParser::Equality_express
 		m_ExpressionStack.emplace(expression);
 		expression->m_Type = Expression::equality_expression_NE;
 		SetLine(ctx, expression);
-		auto& ret = visitChildren(ctx);
+		visitChildren(ctx);
 		m_ExpressionStack.pop();
-		return ret;
+		return nullptr;
 	}
-	else
-		return visitChildren(ctx);
+	visitChildren(ctx);
+	return nullptr;
 }
 
 antlrcpp::Any XiasVisitor::visitRelational_expression(XiasParser::Relational_expressionContext* ctx)
@@ -670,9 +816,9 @@ antlrcpp::Any XiasVisitor::visitRelational_expression(XiasParser::Relational_exp
 		expression->m_Type = Expression::relational_expression_LT;
 		expression->m_Data.emplace_back("<");
 		SetLine(ctx, expression);
-		auto& ret = visitChildren(ctx);
+		visitChildren(ctx);
 		m_ExpressionStack.pop();
-		return ret;
+		return nullptr;
 	}
 	else if (ctx->GT())
 	{
@@ -682,9 +828,9 @@ antlrcpp::Any XiasVisitor::visitRelational_expression(XiasParser::Relational_exp
 		expression->m_Type = Expression::relational_expression_GT;
 		expression->m_Data.emplace_back(">");
 		SetLine(ctx, expression);
-		auto& ret = visitChildren(ctx);
+		visitChildren(ctx);
 		m_ExpressionStack.pop();
-		return ret;
+		return nullptr;
 	}
 	else if (ctx->OP_LE())
 	{
@@ -694,9 +840,9 @@ antlrcpp::Any XiasVisitor::visitRelational_expression(XiasParser::Relational_exp
 		expression->m_Type = Expression::relational_expression_OP_LE;
 		expression->m_Data.emplace_back("<=");
 		SetLine(ctx, expression);
-		auto& ret = visitChildren(ctx);
+		visitChildren(ctx);
 		m_ExpressionStack.pop();
-		return ret;
+		return nullptr;
 	}
 	else if (ctx->OP_GE())
 	{
@@ -706,9 +852,9 @@ antlrcpp::Any XiasVisitor::visitRelational_expression(XiasParser::Relational_exp
 		expression->m_Type = Expression::relational_expression_OP_GE;
 		expression->m_Data.emplace_back(">=");
 		SetLine(ctx, expression);
-		auto& ret = visitChildren(ctx);
+		visitChildren(ctx);
 		m_ExpressionStack.pop();
-		return ret;
+		return nullptr;
 	}
 	else if (ctx->IS())
 	{
@@ -718,9 +864,9 @@ antlrcpp::Any XiasVisitor::visitRelational_expression(XiasParser::Relational_exp
 		expression->m_Type = Expression::relational_expression_IS;
 		expression->m_Data.emplace_back(ctx->type_()->getText());
 		SetLine(ctx, expression);
-		auto& ret = visitChildren(ctx);
+		visitChildren(ctx);
 		m_ExpressionStack.pop();
-		return ret;
+		return nullptr;
 	}
 	else if (ctx->AS())
 	{
@@ -730,12 +876,12 @@ antlrcpp::Any XiasVisitor::visitRelational_expression(XiasParser::Relational_exp
 		expression->m_Type = Expression::relational_expression_AS;
 		expression->m_Data.emplace_back(ctx->type_()->getText());
 		SetLine(ctx, expression);
-		auto& ret = visitChildren(ctx);
+		visitChildren(ctx);
 		m_ExpressionStack.pop();
-		return ret;
+		return nullptr;
 	}
-	else
-		return visitChildren(ctx);
+	visitChildren(ctx);
+	return nullptr;
 }
 
 antlrcpp::Any XiasVisitor::visitShift_expression(XiasParser::Shift_expressionContext* ctx)
@@ -748,9 +894,9 @@ antlrcpp::Any XiasVisitor::visitShift_expression(XiasParser::Shift_expressionCon
 		expression->m_Type = Expression::shift_expression_LEFT;
 		expression->m_Data.emplace_back("<<");
 		SetLine(ctx, expression);
-		auto& ret = visitChildren(ctx);
+		visitChildren(ctx);
 		m_ExpressionStack.pop();
-		return ret;
+		return nullptr;
 	}
 	else if (ctx->right_shift())
 	{
@@ -760,12 +906,12 @@ antlrcpp::Any XiasVisitor::visitShift_expression(XiasParser::Shift_expressionCon
 		expression->m_Type = Expression::shift_expression_RIGHT;
 		expression->m_Data.emplace_back(">>");
 		SetLine(ctx, expression);
-		auto& ret = visitChildren(ctx);
+		visitChildren(ctx);
 		m_ExpressionStack.pop();
-		return ret;
+		return nullptr;
 	}
-	else
-		return visitChildren(ctx);
+	visitChildren(ctx);
+	return nullptr;
 }
 
 antlrcpp::Any XiasVisitor::visitAdditive_expression(XiasParser::Additive_expressionContext* ctx)
@@ -778,9 +924,9 @@ antlrcpp::Any XiasVisitor::visitAdditive_expression(XiasParser::Additive_express
 		expression->m_Type = Expression::additive_expression_PLUS;
 		expression->m_Data.emplace_back("+");
 		SetLine(ctx, expression);
-		auto& ret = visitChildren(ctx);
+		visitChildren(ctx);
 		m_ExpressionStack.pop();
-		return ret;
+		return nullptr;
 	}
 	else if (ctx->MINUS())
 	{
@@ -790,12 +936,12 @@ antlrcpp::Any XiasVisitor::visitAdditive_expression(XiasParser::Additive_express
 		expression->m_Type = Expression::additive_expression_MINUS;
 		expression->m_Data.emplace_back("-");
 		SetLine(ctx, expression);
-		auto& ret = visitChildren(ctx);
+		visitChildren(ctx);
 		m_ExpressionStack.pop();
-		return ret;
+		return nullptr;
 	}
-	else
-		return visitChildren(ctx);
+	visitChildren(ctx);
+	return nullptr;
 }
 
 antlrcpp::Any XiasVisitor::visitMultiplicative_expression(XiasParser::Multiplicative_expressionContext* ctx)
@@ -808,9 +954,9 @@ antlrcpp::Any XiasVisitor::visitMultiplicative_expression(XiasParser::Multiplica
 		expression->m_Type = Expression::multiplicative_expression_STAR;
 		expression->m_Data.emplace_back("*");
 		SetLine(ctx, expression);
-		auto& ret = visitChildren(ctx);
+		visitChildren(ctx);
 		m_ExpressionStack.pop();
-		return ret;
+		return nullptr;
 	}
 	else if (ctx->DIV())
 	{
@@ -820,9 +966,9 @@ antlrcpp::Any XiasVisitor::visitMultiplicative_expression(XiasParser::Multiplica
 		expression->m_Type = Expression::multiplicative_expression_DIV;
 		expression->m_Data.emplace_back("/");
 		SetLine(ctx, expression);
-		auto& ret = visitChildren(ctx);
+		visitChildren(ctx);
 		m_ExpressionStack.pop();
-		return ret;
+		return nullptr;
 	}
 	else if (ctx->PERCENT())
 	{
@@ -832,12 +978,12 @@ antlrcpp::Any XiasVisitor::visitMultiplicative_expression(XiasParser::Multiplica
 		expression->m_Type = Expression::multiplicative_expression_MOD;
 		expression->m_Data.emplace_back("%");
 		SetLine(ctx, expression);
-		auto& ret = visitChildren(ctx);
+		visitChildren(ctx);
 		m_ExpressionStack.pop();
-		return ret;
+		return nullptr;
 	}
-	else
-		return visitChildren(ctx);
+	visitChildren(ctx);
+	return nullptr;
 }
 
 antlrcpp::Any XiasVisitor::visitCast_expression(XiasParser::Cast_expressionContext* ctx)
@@ -848,9 +994,9 @@ antlrcpp::Any XiasVisitor::visitCast_expression(XiasParser::Cast_expressionConte
 	expression->m_Type = Expression::cast_expression;
 	expression->m_Data.emplace_back(ctx->type_()->getText());
 	SetLine(ctx, expression);
-	auto& ret = visitChildren(ctx);
+	visitChildren(ctx);
 	m_ExpressionStack.pop();
-	return ret;
+	return nullptr;
 }
 
 antlrcpp::Any XiasVisitor::visitPre_decrement_expression(XiasParser::Pre_decrement_expressionContext* ctx)
@@ -861,9 +1007,9 @@ antlrcpp::Any XiasVisitor::visitPre_decrement_expression(XiasParser::Pre_decreme
 	expression->m_Type = Expression::pre_decrement_expression;
 	expression->m_Data.emplace_back("--_");
 	SetLine(ctx, expression);
-	auto& ret = visitChildren(ctx);
+	visitChildren(ctx);
 	m_ExpressionStack.pop();
-	return ret;
+	return nullptr;
 }
 
 antlrcpp::Any XiasVisitor::visitPre_increment_expression(XiasParser::Pre_increment_expressionContext* ctx)
@@ -874,9 +1020,9 @@ antlrcpp::Any XiasVisitor::visitPre_increment_expression(XiasParser::Pre_increme
 	expression->m_Type = Expression::pre_increment_expression;
 	expression->m_Data.emplace_back("++_");
 	SetLine(ctx, expression);
-	auto& ret = visitChildren(ctx);
+	visitChildren(ctx);
 	m_ExpressionStack.pop();
-	return ret;
+	return nullptr;
 }
 
 antlrcpp::Any XiasVisitor::visitUnary_tilde_expression(XiasParser::Unary_tilde_expressionContext* ctx)
@@ -887,9 +1033,9 @@ antlrcpp::Any XiasVisitor::visitUnary_tilde_expression(XiasParser::Unary_tilde_e
 	expression->m_Type = Expression::unary_tilde_expression;
 	expression->m_Data.emplace_back("~");
 	SetLine(ctx, expression);
-	auto& ret = visitChildren(ctx);
+	visitChildren(ctx);
 	m_ExpressionStack.pop();
-	return ret;
+	return nullptr;
 }
 
 antlrcpp::Any XiasVisitor::visitUnary_bang_expression(XiasParser::Unary_bang_expressionContext* ctx)
@@ -900,9 +1046,9 @@ antlrcpp::Any XiasVisitor::visitUnary_bang_expression(XiasParser::Unary_bang_exp
 	expression->m_Type = Expression::unary_bang_expression;
 	expression->m_Data.emplace_back("!");
 	SetLine(ctx, expression);
-	auto& ret = visitChildren(ctx);
+	visitChildren(ctx);
 	m_ExpressionStack.pop();
-	return ret;
+	return nullptr;
 }
 
 antlrcpp::Any XiasVisitor::visitUnary_minus_expression(XiasParser::Unary_minus_expressionContext* ctx)
@@ -913,9 +1059,9 @@ antlrcpp::Any XiasVisitor::visitUnary_minus_expression(XiasParser::Unary_minus_e
 	expression->m_Type = Expression::unary_minus_expression;
 	expression->m_Data.emplace_back("-");
 	SetLine(ctx, expression);
-	auto& ret = visitChildren(ctx);
+	visitChildren(ctx);
 	m_ExpressionStack.pop();
-	return ret;
+	return nullptr;
 }
 
 antlrcpp::Any XiasVisitor::visitUnary_plus_expression(XiasParser::Unary_plus_expressionContext* ctx)
@@ -926,9 +1072,9 @@ antlrcpp::Any XiasVisitor::visitUnary_plus_expression(XiasParser::Unary_plus_exp
 	expression->m_Type = Expression::unary_plus_expression;
 	expression->m_Data.emplace_back("+");
 	SetLine(ctx, expression);
-	auto& ret = visitChildren(ctx);
+	visitChildren(ctx);
 	m_ExpressionStack.pop();
-	return ret;
+	return nullptr;
 }
 
 antlrcpp::Any XiasVisitor::visitPrimary_no_array_creation_expression_base(XiasParser::Primary_no_array_creation_expression_baseContext* ctx)
@@ -938,9 +1084,9 @@ antlrcpp::Any XiasVisitor::visitPrimary_no_array_creation_expression_base(XiasPa
 	m_ExpressionStack.emplace(expression);
 	expression->m_Type = Expression::primary_no_array_creation_base;
 	SetLine(ctx, expression);
-	auto& ret = visitChildren(ctx);
+	visitChildren(ctx);
 	m_ExpressionStack.pop();
-	return ret;
+	return nullptr;
 }
 
 antlrcpp::Any XiasVisitor::visitLiteral(XiasParser::LiteralContext* ctx)
@@ -989,7 +1135,8 @@ antlrcpp::Any XiasVisitor::visitLiteral(XiasParser::LiteralContext* ctx)
 		case 8: expression->m_Type = Expression::null_literal; break;
 	}
 	m_ExpressionStack.pop();
-	return visitChildren(ctx);
+	visitChildren(ctx);
+	return nullptr;
 }
 
 antlrcpp::Any XiasVisitor::visitSimple_name(XiasParser::Simple_nameContext* ctx)
@@ -1000,9 +1147,9 @@ antlrcpp::Any XiasVisitor::visitSimple_name(XiasParser::Simple_nameContext* ctx)
 	expression->m_Type = Expression::simple_name;
 	expression->m_Data.emplace_back(ctx->identifier()->getText());
 	SetLine(ctx, expression);
-	auto& ret = visitChildren(ctx);
+	visitChildren(ctx);
 	m_ExpressionStack.pop();
-	return ret;
+	return nullptr;
 }
 
 antlrcpp::Any XiasVisitor::visitParenthesized_expression(XiasParser::Parenthesized_expressionContext* ctx)
@@ -1012,9 +1159,9 @@ antlrcpp::Any XiasVisitor::visitParenthesized_expression(XiasParser::Parenthesiz
 	m_ExpressionStack.emplace(expression);
 	expression->m_Type = Expression::parenthesized;
 	SetLine(ctx, expression);
-	auto& ret = visitChildren(ctx);
+	visitChildren(ctx);
 	m_ExpressionStack.pop();
-	return ret;
+	return nullptr;
 }
 
 antlrcpp::Any XiasVisitor::visitThis_access(XiasParser::This_accessContext* ctx)
@@ -1036,9 +1183,9 @@ antlrcpp::Any XiasVisitor::visitBase_access(XiasParser::Base_accessContext* ctx)
 	if (identifier)
 		expression->m_Data.emplace_back(ctx->identifier()->getText());
 	SetLine(ctx, expression);
-	auto& ret = visitChildren(ctx);
+	visitChildren(ctx);
 	m_ExpressionStack.pop();
-	return ret;
+	return nullptr;
 }
 
 antlrcpp::Any XiasVisitor::visitObject_creation_expression(XiasParser::Object_creation_expressionContext* ctx)
@@ -1049,9 +1196,9 @@ antlrcpp::Any XiasVisitor::visitObject_creation_expression(XiasParser::Object_cr
 	expression->m_Type = Expression::object_creation;
 	expression->m_Data.emplace_back(ctx->type_()->getText());
 	SetLine(ctx, expression);
-	auto& ret = visitChildren(ctx);
+	visitChildren(ctx);
 	m_ExpressionStack.pop();
-	return ret;
+	return nullptr;
 }
 
 antlrcpp::Any XiasVisitor::visitObject_initializer(XiasParser::Object_initializerContext* ctx)
@@ -1061,9 +1208,9 @@ antlrcpp::Any XiasVisitor::visitObject_initializer(XiasParser::Object_initialize
 	m_ExpressionStack.emplace(expression);
 	expression->m_Type = Expression::object_initializer;
 	SetLine(ctx, expression);
-	auto& ret = visitChildren(ctx);
+	visitChildren(ctx);
 	m_ExpressionStack.pop();
-	return ret;
+	return nullptr;
 }
 
 antlrcpp::Any XiasVisitor::visitMember_initializer(XiasParser::Member_initializerContext* ctx)
@@ -1074,9 +1221,9 @@ antlrcpp::Any XiasVisitor::visitMember_initializer(XiasParser::Member_initialize
 	expression->m_Type = Expression::object_initializer;
 	expression->m_Data.emplace_back(ctx->identifier()->getText());
 	SetLine(ctx, expression);
-	auto& ret = visitChildren(ctx);
+	visitChildren(ctx);
 	m_ExpressionStack.pop();
-	return ret;
+	return nullptr;
 }
 
 antlrcpp::Any XiasVisitor::visitCollection_initializer(XiasParser::Collection_initializerContext* ctx)
@@ -1086,9 +1233,9 @@ antlrcpp::Any XiasVisitor::visitCollection_initializer(XiasParser::Collection_in
 	m_ExpressionStack.emplace(expression);
 	expression->m_Type = Expression::collection_initializer;
 	SetLine(ctx, expression);
-	auto& ret = visitChildren(ctx);
+	visitChildren(ctx);
 	m_ExpressionStack.pop();
-	return ret;
+	return nullptr;
 }
 
 antlrcpp::Any XiasVisitor::visitElement_initializer(XiasParser::Element_initializerContext* ctx)
@@ -1098,9 +1245,9 @@ antlrcpp::Any XiasVisitor::visitElement_initializer(XiasParser::Element_initiali
 	m_ExpressionStack.emplace(expression);
 	expression->m_Type = Expression::element_initializer;
 	SetLine(ctx, expression);
-	auto& ret = visitChildren(ctx);
+	visitChildren(ctx);
 	m_ExpressionStack.pop();
-	return ret;
+	return nullptr;
 }
 
 antlrcpp::Any XiasVisitor::visitTypeof_expression(XiasParser::Typeof_expressionContext* ctx)
@@ -1116,9 +1263,9 @@ antlrcpp::Any XiasVisitor::visitTypeof_expression(XiasParser::Typeof_expressionC
 		case 3: expression->m_Data.emplace_back("void"); break;
 	}
 	SetLine(ctx, expression);
-	auto& ret = visitChildren(ctx);
+	visitChildren(ctx);
 	m_ExpressionStack.pop();
-	return ret;
+	return nullptr;
 }
 
 antlrcpp::Any XiasVisitor::visitDefault_value_expression(XiasParser::Default_value_expressionContext* ctx)
@@ -1129,9 +1276,9 @@ antlrcpp::Any XiasVisitor::visitDefault_value_expression(XiasParser::Default_val
 	expression->m_Type = Expression::default_value;
 	expression->m_Data.emplace_back(ctx->type_()->getText());
 	SetLine(ctx, expression);
-	auto& ret = visitChildren(ctx);
+	visitChildren(ctx);
 	m_ExpressionStack.pop();
-	return ret;
+	return nullptr;
 }
 
 antlrcpp::Any XiasVisitor::visitPrimary_member_access(XiasParser::Primary_member_accessContext* ctx)
@@ -1142,9 +1289,9 @@ antlrcpp::Any XiasVisitor::visitPrimary_member_access(XiasParser::Primary_member
 	expression->m_Type = Expression::primary_member_access;
 	expression->m_Data.emplace_back(ctx->identifier()->getText());
 	SetLine(ctx, expression);
-	auto& ret = visitChildren(ctx);
+	visitChildren(ctx);
 	m_ExpressionStack.pop();
-	return ret;
+	return nullptr;
 }
 
 antlrcpp::Any XiasVisitor::visitPrimary_invocation(XiasParser::Primary_invocationContext* ctx)
@@ -1154,9 +1301,20 @@ antlrcpp::Any XiasVisitor::visitPrimary_invocation(XiasParser::Primary_invocatio
 	m_ExpressionStack.emplace(expression);
 	expression->m_Type = Expression::primary_invocation;
 	SetLine(ctx, expression);
-	auto& ret = visitChildren(ctx);
+	if (ctx->argument_list())
+	{
+		SetLine(ctx->argument_list(), expression);
+		visitArgument_list(ctx->argument_list());
+	}
+	else
+	{
+		Expression* emptyArguments;
+		emptyArguments = &expression->m_Children.emplace_back();
+		emptyArguments->m_Type = Expression::expression_list;
+	}
+	visitChildren(ctx);
 	m_ExpressionStack.pop();
-	return ret;
+	return nullptr;
 }
 
 antlrcpp::Any XiasVisitor::visitPrimary_element_access(XiasParser::Primary_element_accessContext* ctx)
@@ -1166,9 +1324,9 @@ antlrcpp::Any XiasVisitor::visitPrimary_element_access(XiasParser::Primary_eleme
 	m_ExpressionStack.emplace(expression);
 	expression->m_Type = Expression::primary_element_access;
 	SetLine(ctx, expression);
-	auto& ret = visitChildren(ctx);
+	visitChildren(ctx);
 	m_ExpressionStack.pop();
-	return ret;
+	return nullptr;
 }
 
 antlrcpp::Any XiasVisitor::visitPrimary_post_increment(XiasParser::Primary_post_incrementContext* ctx)
@@ -1179,9 +1337,9 @@ antlrcpp::Any XiasVisitor::visitPrimary_post_increment(XiasParser::Primary_post_
 	expression->m_Type = Expression::primary_post_increment;
 	expression->m_Data.emplace_back("_++");
 	SetLine(ctx, expression);
-	auto& ret = visitChildren(ctx);
+	visitChildren(ctx);
 	m_ExpressionStack.pop();
-	return ret;
+	return nullptr;
 }
 
 antlrcpp::Any XiasVisitor::visitPrimary_post_decrement(XiasParser::Primary_post_decrementContext* ctx)
@@ -1192,9 +1350,9 @@ antlrcpp::Any XiasVisitor::visitPrimary_post_decrement(XiasParser::Primary_post_
 	expression->m_Type = Expression::primary_post_decrement;
 	expression->m_Data.emplace_back("_--");
 	SetLine(ctx, expression);
-	auto& ret = visitChildren(ctx);
+	visitChildren(ctx);
 	m_ExpressionStack.pop();
-	return ret;
+	return nullptr;
 }
 
 antlrcpp::Any XiasVisitor::visitMember_access(XiasParser::Member_accessContext* ctx)
@@ -1205,9 +1363,9 @@ antlrcpp::Any XiasVisitor::visitMember_access(XiasParser::Member_accessContext* 
 	expression->m_Type = Expression::member_access;
 	expression->m_Data.emplace_back(ctx->identifier()->getText());
 	SetLine(ctx, expression);
-	auto& ret = visitChildren(ctx);
+	visitChildren(ctx);
 	m_ExpressionStack.pop();
-	return ret;
+	return nullptr;
 }
 
 antlrcpp::Any XiasVisitor::visitPredefined_type(XiasParser::Predefined_typeContext* ctx)
@@ -1218,9 +1376,9 @@ antlrcpp::Any XiasVisitor::visitPredefined_type(XiasParser::Predefined_typeConte
 	expression->m_Type = Expression::predefined_type;
 	expression->m_Data.emplace_back(ctx->getText());
 	SetLine(ctx, expression);
-	auto& ret = visitChildren(ctx);
+	visitChildren(ctx);
 	m_ExpressionStack.pop();
-	return ret;
+	return nullptr;
 }
 
 antlrcpp::Any XiasVisitor::visitQualified_alias_member(XiasParser::Qualified_alias_memberContext* ctx)
@@ -1229,13 +1387,13 @@ antlrcpp::Any XiasVisitor::visitQualified_alias_member(XiasParser::Qualified_ali
 	expression = &m_ExpressionStack.top()->m_Children.emplace_back();
 	m_ExpressionStack.emplace(expression);
 	expression->m_Type = Expression::qualified_alias_member;
-	auto& identifiers = ctx->identifier();
+	auto identifiers = ctx->identifier();
 	for (auto& identifer : identifiers)
 		expression->m_Data.emplace_back(identifer->getText());
 	SetLine(ctx, expression);
-	auto& ret = visitChildren(ctx);
+	visitChildren(ctx);
 	m_ExpressionStack.pop();
-	return ret;
+	return nullptr;
 }
 
 antlrcpp::Any XiasVisitor::visitInvocation_expression(XiasParser::Invocation_expressionContext* ctx)
@@ -1245,18 +1403,27 @@ antlrcpp::Any XiasVisitor::visitInvocation_expression(XiasParser::Invocation_exp
 	m_ExpressionStack.emplace(expression);
 	expression->m_Type = Expression::invocation_expression;
 	SetLine(ctx, expression);
-	auto& ret = visitChildren(ctx->primary_expression()->primary_no_array_creation_expression_base());
+	visitChildren(ctx->primary_expression()->primary_no_array_creation_expression_base());
 
 	Expression* invExpression;
 	invExpression = &m_ExpressionStack.top()->m_Children.emplace_back();
 	m_ExpressionStack.emplace(invExpression);
 	invExpression->m_Type = Expression::primary_invocation;
-	SetLine(ctx->argument_list(), invExpression);
-	visitArgument_list(ctx->argument_list());
+	if (ctx->argument_list())
+	{
+		SetLine(ctx->argument_list(), invExpression);
+		visitArgument_list(ctx->argument_list());
+	}
+	else
+	{
+		Expression* emptyArguments;
+		emptyArguments = &invExpression->m_Children.emplace_back();
+		emptyArguments->m_Type = Expression::expression_list;
+	}
 	m_ExpressionStack.pop();
 
 	m_ExpressionStack.pop();
-	return ret;
+	return nullptr;
 }
 
 antlrcpp::Any XiasVisitor::visitElement_access(XiasParser::Element_accessContext* ctx)
@@ -1266,9 +1433,9 @@ antlrcpp::Any XiasVisitor::visitElement_access(XiasParser::Element_accessContext
 	m_ExpressionStack.emplace(expression);
 	expression->m_Type = Expression::element_access;
 	SetLine(ctx, expression);
-	auto& ret = visitChildren(ctx);
+	visitChildren(ctx);
 	m_ExpressionStack.pop();
-	return ret;
+	return nullptr;
 }
 
 antlrcpp::Any XiasVisitor::visitPost_increment_expression(XiasParser::Post_increment_expressionContext* ctx)
@@ -1279,9 +1446,9 @@ antlrcpp::Any XiasVisitor::visitPost_increment_expression(XiasParser::Post_incre
 	expression->m_Type = Expression::post_increment_expression;
 	expression->m_Data.emplace_back("_++");
 	SetLine(ctx, expression);
-	auto& ret = visitChildren(ctx);
+	visitChildren(ctx);
 	m_ExpressionStack.pop();
-	return ret;
+	return nullptr;
 }
 
 antlrcpp::Any XiasVisitor::visitPost_decrement_expression(XiasParser::Post_decrement_expressionContext* ctx)
@@ -1292,9 +1459,9 @@ antlrcpp::Any XiasVisitor::visitPost_decrement_expression(XiasParser::Post_decre
 	expression->m_Type = Expression::post_decrement_expression;
 	expression->m_Data.emplace_back("_--");
 	SetLine(ctx, expression);
-	auto& ret = visitChildren(ctx);
+	visitChildren(ctx);
 	m_ExpressionStack.pop();
-	return ret;
+	return nullptr;
 }
 
 antlrcpp::Any XiasVisitor::visitArrayCreationWithExpressionSize(XiasParser::ArrayCreationWithExpressionSizeContext* ctx)
@@ -1305,9 +1472,9 @@ antlrcpp::Any XiasVisitor::visitArrayCreationWithExpressionSize(XiasParser::Arra
 	expression->m_Type = Expression::array_creation_with_expression_size;
 	expression->m_Data.emplace_back(ctx->non_array_type()->getText());
 	SetLine(ctx, expression);
-	auto& ret = visitChildren(ctx);
+	visitChildren(ctx);
 	m_ExpressionStack.pop();
-	return ret;
+	return nullptr;
 }
 
 antlrcpp::Any XiasVisitor::visitArrayCreationWithInitializer(XiasParser::ArrayCreationWithInitializerContext* ctx)
@@ -1318,9 +1485,9 @@ antlrcpp::Any XiasVisitor::visitArrayCreationWithInitializer(XiasParser::ArrayCr
 	expression->m_Type = Expression::array_creation_with_initializer;
 	expression->m_Data.emplace_back(ctx->array_type()->getText());
 	SetLine(ctx, expression);
-	auto& ret = visitChildren(ctx);
+	visitChildren(ctx);
 	m_ExpressionStack.pop();
-	return ret;
+	return nullptr;
 }
 antlrcpp::Any XiasVisitor::visitRank_specifier(XiasParser::Rank_specifierContext* ctx)
 {
@@ -1328,12 +1495,12 @@ antlrcpp::Any XiasVisitor::visitRank_specifier(XiasParser::Rank_specifierContext
 	expression = &m_ExpressionStack.top()->m_Children.emplace_back();
 	m_ExpressionStack.emplace(expression);
 	expression->m_Type = Expression::rank_specifier;
-	auto& ranks = ctx->dim_separator();
+	auto ranks = ctx->dim_separator();
 	expression->m_Data.emplace_back(std::to_string(ranks.size()));
 	SetLine(ctx, expression);
-	auto& ret = visitChildren(ctx);
+	visitChildren(ctx);
 	m_ExpressionStack.pop();
-	return ret;
+	return nullptr;
 }
 
 antlrcpp::Any XiasVisitor::visitAssignment(XiasParser::AssignmentContext* ctx)
@@ -1356,9 +1523,9 @@ antlrcpp::Any XiasVisitor::visitAssignment(XiasParser::AssignmentContext* ctx)
 		case 11: expression->m_Type = Expression::RIGHT_SHIFT_assignment; break;
 	}
 	SetLine(ctx, expression);
-	auto& ret = visitChildren(ctx);
+	visitChildren(ctx);
 	m_ExpressionStack.pop();
-	return ret;
+	return nullptr;
 }
 
 antlrcpp::Any XiasVisitor::visitArray_initializer(XiasParser::Array_initializerContext* ctx)
@@ -1368,9 +1535,9 @@ antlrcpp::Any XiasVisitor::visitArray_initializer(XiasParser::Array_initializerC
 	m_ExpressionStack.emplace(expression);
 	expression->m_Type = Expression::array_initializer;
 	SetLine(ctx, expression);
-	auto& ret = visitChildren(ctx);
+	visitChildren(ctx);
 	m_ExpressionStack.pop();
-	return ret;
+	return nullptr;
 }
 
 antlrcpp::Any XiasVisitor::visitVariable_initializer_list(XiasParser::Variable_initializer_listContext* ctx)
@@ -1380,9 +1547,9 @@ antlrcpp::Any XiasVisitor::visitVariable_initializer_list(XiasParser::Variable_i
 	m_ExpressionStack.emplace(expression);
 	expression->m_Type = Expression::variable_initializer_list;
 	SetLine(ctx, expression);
-	auto& ret = visitChildren(ctx);
+	visitChildren(ctx);
 	m_ExpressionStack.pop();
-	return ret;
+	return nullptr;
 }
 
 antlrcpp::Any XiasVisitor::visitVariable_initializer(XiasParser::Variable_initializerContext* ctx)
@@ -1392,9 +1559,9 @@ antlrcpp::Any XiasVisitor::visitVariable_initializer(XiasParser::Variable_initia
 	m_ExpressionStack.emplace(expression);
 	expression->m_Type = Expression::variable_initializer;
 	SetLine(ctx, expression);
-	auto& ret = visitChildren(ctx);
+	visitChildren(ctx);
 	m_ExpressionStack.pop();
-	return ret;
+	return nullptr;
 }
 
 antlrcpp::Any XiasVisitor::visitType_argument_list(XiasParser::Type_argument_listContext* ctx)
@@ -1412,9 +1579,9 @@ antlrcpp::Any XiasVisitor::visitType_argument_list(XiasParser::Type_argument_lis
 		expression->m_Data.emplace_back(type->getText());
 	}
 	SetLine(ctx, expression);
-	auto& ret = visitChildren(ctx);
+	visitChildren(ctx);
 	m_ExpressionStack.pop();
-	return ret;
+	return nullptr;
 }
 
 antlrcpp::Any XiasVisitor::visitExpression_list(XiasParser::Expression_listContext* ctx)
@@ -1424,9 +1591,9 @@ antlrcpp::Any XiasVisitor::visitExpression_list(XiasParser::Expression_listConte
 	m_ExpressionStack.emplace(expression);
 	expression->m_Type = Expression::expression_list;
 	SetLine(ctx, expression);
-	auto& ret = visitChildren(ctx);
+	visitChildren(ctx);
 	m_ExpressionStack.pop();
-	return ret;
+	return nullptr;
 }
 
 antlrcpp::Any XiasVisitor::visitArgument_list(XiasParser::Argument_listContext* ctx)
@@ -1436,9 +1603,9 @@ antlrcpp::Any XiasVisitor::visitArgument_list(XiasParser::Argument_listContext* 
 	m_ExpressionStack.emplace(expression);
 	expression->m_Type = Expression::argument_list;
 	SetLine(ctx, expression);
-	auto& ret = visitChildren(ctx);
+	visitChildren(ctx);
 	m_ExpressionStack.pop();
-	return ret;
+	return nullptr;
 }
 
 
@@ -1460,9 +1627,9 @@ antlrcpp::Any XiasVisitor::visitLabeled_statement(XiasParser::Labeled_statementC
 	statement->m_Type = Statement::labeled_statement;
 	statement->m_Data.emplace_back(ctx->identifier()->getText());
 	SetLine(ctx, statement);
-	auto& ret = visitChildren(ctx);
+	visitChildren(ctx);
 	m_StatementStack.pop();
-	return ret;
+	return nullptr;
 }
 
 antlrcpp::Any XiasVisitor::visitLocal_variable_declaration(XiasParser::Local_variable_declarationContext* ctx)
@@ -1473,9 +1640,9 @@ antlrcpp::Any XiasVisitor::visitLocal_variable_declaration(XiasParser::Local_var
 	statement->m_Type = Statement::local_variable_declaration;
 	statement->m_Data.emplace_back(ctx->local_variable_type()->getText());
 	SetLine(ctx, statement);
-	auto& ret = visitChildren(ctx);
+	visitChildren(ctx);
 	m_StatementStack.pop();
-	return ret;
+	return nullptr;
 }
 
 antlrcpp::Any XiasVisitor::visitLocal_variable_declarator(XiasParser::Local_variable_declaratorContext* ctx)
@@ -1484,16 +1651,16 @@ antlrcpp::Any XiasVisitor::visitLocal_variable_declarator(XiasParser::Local_vari
 	statement = &m_StatementStack.top()->m_Children.emplace_back();
 	m_StatementStack.emplace(statement);
 	statement->m_Type = Statement::local_variable_declarator;
-	statement->m_Data.emplace_back(ctx->identifier()->getText());
 	SetLine(ctx, statement);
 	Expression* expression = &statement->m_Expressions.emplace_back();
 	expression->m_Type = Expression::local_variable_initializer;
+	expression->m_Data.emplace_back(ctx->identifier()->getText());
 	m_ExpressionStack.push(expression);
 	SetLine(ctx, expression);
-	auto& ret = visitChildren(ctx);
+	visitChildren(ctx);
 	m_ExpressionStack.pop();
 	m_StatementStack.pop();
-	return ret;
+	return nullptr;
 }
 
 antlrcpp::Any XiasVisitor::visitLocal_constant_declaration(XiasParser::Local_constant_declarationContext* ctx)
@@ -1504,9 +1671,9 @@ antlrcpp::Any XiasVisitor::visitLocal_constant_declaration(XiasParser::Local_con
 	statement->m_Type = Statement::local_constant_declaration;
 	statement->m_Data.emplace_back(ctx->type_()->getText());
 	SetLine(ctx, statement);
-	auto& ret = visitChildren(ctx);
+	visitChildren(ctx);
 	m_StatementStack.pop();
-	return ret;
+	return nullptr;
 }
 
 antlrcpp::Any XiasVisitor::visitConstant_declarator(XiasParser::Constant_declaratorContext* ctx)
@@ -1515,16 +1682,16 @@ antlrcpp::Any XiasVisitor::visitConstant_declarator(XiasParser::Constant_declara
 	statement = &m_StatementStack.top()->m_Children.emplace_back();
 	m_StatementStack.emplace(statement);
 	statement->m_Type = Statement::constant_declarator;
-	statement->m_Data.emplace_back(ctx->identifier()->getText());
 	SetLine(ctx, statement);
 	Expression* expression = &statement->m_Expressions.emplace_back();
 	expression->m_Type = Expression::expression;
+	expression->m_Data.emplace_back(ctx->identifier()->getText());
 	m_ExpressionStack.push(expression);
 	SetLine(ctx, expression);
-	auto& ret = visitChildren(ctx);
+	visitChildren(ctx);
 	m_ExpressionStack.pop();
 	m_StatementStack.pop();
-	return ret;
+	return nullptr;
 }
 
 antlrcpp::Any XiasVisitor::visitEmpty_statement(XiasParser::Empty_statementContext* ctx)
@@ -1543,10 +1710,10 @@ antlrcpp::Any XiasVisitor::visitStatement_expression(XiasParser::Statement_expre
 	expression->m_Type = Expression::expression;
 	m_ExpressionStack.push(expression);
 	SetLine(ctx, expression);
-	auto& ret = visitChildren(ctx);
+	visitChildren(ctx);
 	m_ExpressionStack.pop();
 	m_StatementStack.pop();
-	return ret;
+	return nullptr;
 }
 
 antlrcpp::Any XiasVisitor::visitIf_statement(XiasParser::If_statementContext* ctx)
@@ -1560,10 +1727,10 @@ antlrcpp::Any XiasVisitor::visitIf_statement(XiasParser::If_statementContext* ct
 	expression->m_Type = Expression::expression;
 	m_ExpressionStack.push(expression);
 	SetLine(ctx, expression);
-	auto& ret = visitChildren(ctx);
+	visitChildren(ctx);
 	m_ExpressionStack.pop();
 	m_StatementStack.pop();
-	return ret;
+	return nullptr;
 }
 
 antlrcpp::Any XiasVisitor::visitStatement_expression_list(XiasParser::Statement_expression_listContext* ctx)
@@ -1582,10 +1749,10 @@ antlrcpp::Any XiasVisitor::visitSwitch_statement(XiasParser::Switch_statementCon
 	expression->m_Type = Expression::expression;
 	m_ExpressionStack.push(expression);
 	SetLine(ctx, expression);
-	auto& ret = visitChildren(ctx);
+	visitChildren(ctx);
 	m_ExpressionStack.pop();
 	m_StatementStack.pop();
-	return ret;
+	return nullptr;
 }
 
 antlrcpp::Any XiasVisitor::visitSwitch_section(XiasParser::Switch_sectionContext* ctx)
@@ -1595,9 +1762,9 @@ antlrcpp::Any XiasVisitor::visitSwitch_section(XiasParser::Switch_sectionContext
 	m_StatementStack.emplace(statement);
 	statement->m_Type = Statement::switch_section;
 	SetLine(ctx, statement);
-	auto& ret = visitChildren(ctx);
+	visitChildren(ctx);
 	m_StatementStack.pop();
-	return ret;
+	return nullptr;
 }
 
 antlrcpp::Any XiasVisitor::visitSwitch_label(XiasParser::Switch_labelContext* ctx)
@@ -1611,10 +1778,10 @@ antlrcpp::Any XiasVisitor::visitSwitch_label(XiasParser::Switch_labelContext* ct
 	expression->m_Type = Expression::expression;
 	m_ExpressionStack.push(expression);
 	SetLine(ctx, expression);
-	auto& ret = visitChildren(ctx);
+	visitChildren(ctx);
 	m_ExpressionStack.pop();
 	m_StatementStack.pop();
-	return ret;
+	return nullptr;
 }
 
 antlrcpp::Any XiasVisitor::visitWhile_statement(XiasParser::While_statementContext* ctx)
@@ -1628,10 +1795,10 @@ antlrcpp::Any XiasVisitor::visitWhile_statement(XiasParser::While_statementConte
 	expression->m_Type = Expression::expression;
 	m_ExpressionStack.push(expression);
 	SetLine(ctx, expression);
-	auto& ret = visitChildren(ctx);
+	visitChildren(ctx);
 	m_ExpressionStack.pop();
 	m_StatementStack.pop();
-	return ret;
+	return nullptr;
 }
 
 antlrcpp::Any XiasVisitor::visitDo_statement(XiasParser::Do_statementContext* ctx)
@@ -1645,10 +1812,10 @@ antlrcpp::Any XiasVisitor::visitDo_statement(XiasParser::Do_statementContext* ct
 	expression->m_Type = Expression::expression;
 	m_ExpressionStack.push(expression);
 	SetLine(ctx, expression);
-	auto& ret = visitChildren(ctx);
+	visitChildren(ctx);
 	m_ExpressionStack.pop();
 	m_StatementStack.pop();
-	return ret;
+	return nullptr;
 }
 
 antlrcpp::Any XiasVisitor::visitFor_statement(XiasParser::For_statementContext* ctx)
@@ -1658,9 +1825,9 @@ antlrcpp::Any XiasVisitor::visitFor_statement(XiasParser::For_statementContext* 
 	m_StatementStack.emplace(statement);
 	statement->m_Type = Statement::for_statement;
 	SetLine(ctx, statement);
-	auto& ret = visitChildren(ctx);
+	visitChildren(ctx);
 	m_StatementStack.pop();
-	return ret;
+	return nullptr;
 }
 
 antlrcpp::Any XiasVisitor::visitFor_initializer(XiasParser::For_initializerContext* ctx)
@@ -1670,9 +1837,9 @@ antlrcpp::Any XiasVisitor::visitFor_initializer(XiasParser::For_initializerConte
 	m_StatementStack.emplace(statement);
 	statement->m_Type = Statement::for_initializer;
 	SetLine(ctx, statement);
-	auto& ret = visitChildren(ctx);
+	visitChildren(ctx);
 	m_StatementStack.pop();
-	return ret;
+	return nullptr;
 }
 
 antlrcpp::Any XiasVisitor::visitFor_condition(XiasParser::For_conditionContext* ctx)
@@ -1686,10 +1853,10 @@ antlrcpp::Any XiasVisitor::visitFor_condition(XiasParser::For_conditionContext* 
 	expression->m_Type = Expression::expression;
 	m_ExpressionStack.push(expression);
 	SetLine(ctx, expression);
-	auto& ret = visitChildren(ctx);
+	visitChildren(ctx);
 	m_ExpressionStack.pop();
 	m_StatementStack.pop();
-	return ret;
+	return nullptr;
 }
 
 antlrcpp::Any XiasVisitor::visitFor_iterator(XiasParser::For_iteratorContext* ctx)
@@ -1699,9 +1866,9 @@ antlrcpp::Any XiasVisitor::visitFor_iterator(XiasParser::For_iteratorContext* ct
 	m_StatementStack.emplace(statement);
 	statement->m_Type = Statement::switch_statement;
 	SetLine(ctx, statement);
-	auto& ret = visitChildren(ctx);
+	visitChildren(ctx);
 	m_StatementStack.pop();
-	return ret;
+	return nullptr;
 }
 
 antlrcpp::Any XiasVisitor::visitForeach_statement(XiasParser::Foreach_statementContext* ctx)
@@ -1717,10 +1884,10 @@ antlrcpp::Any XiasVisitor::visitForeach_statement(XiasParser::Foreach_statementC
 	expression->m_Type = Expression::expression;
 	m_ExpressionStack.push(expression);
 	SetLine(ctx, expression);
-	auto& ret = visitChildren(ctx);
+	visitChildren(ctx);
 	m_ExpressionStack.pop();
 	m_StatementStack.pop();
-	return ret;
+	return nullptr;
 }
 
 antlrcpp::Any XiasVisitor::visitBreak_statement(XiasParser::Break_statementContext* ctx)
@@ -1745,9 +1912,9 @@ antlrcpp::Any XiasVisitor::visitGoto_statement(XiasParser::Goto_statementContext
 		{
 			statement->m_Type = Statement::goto_label;
 			statement->m_Data.emplace_back(ctx->identifier()->getText());
-			auto& ret = visitChildren(ctx);
+			visitChildren(ctx);
 			m_StatementStack.pop();
-			return ret;
+			return nullptr;
 		}
 		case 2:
 		{
@@ -1755,18 +1922,18 @@ antlrcpp::Any XiasVisitor::visitGoto_statement(XiasParser::Goto_statementContext
 			Expression* expression = &statement->m_Expressions.emplace_back();
 			expression->m_Type = Expression::expression;
 			m_ExpressionStack.push(expression);
-			auto& ret = visitChildren(ctx);
+			visitChildren(ctx);
 			m_ExpressionStack.pop();
 			m_StatementStack.pop();
-			return ret;
+			return nullptr;
 		}
 		case 3:
 		default:
 		{
 			statement->m_Type = Statement::goto_default;
-			auto& ret = visitChildren(ctx);
+			visitChildren(ctx);
 			m_StatementStack.pop();
-			return ret;
+			return nullptr;
 		}
 	}
 }
@@ -1782,10 +1949,10 @@ antlrcpp::Any XiasVisitor::visitReturn_statement(XiasParser::Return_statementCon
 	expression->m_Type = Expression::expression;
 	m_ExpressionStack.push(expression);
 	SetLine(ctx, expression);
-	auto& ret = visitChildren(ctx);
+	visitChildren(ctx);
 	m_ExpressionStack.pop();
 	m_StatementStack.pop();
-	return ret;
+	return nullptr;
 }
 
 antlrcpp::Any XiasVisitor::visitThrow_statement(XiasParser::Throw_statementContext* ctx)
@@ -1799,10 +1966,10 @@ antlrcpp::Any XiasVisitor::visitThrow_statement(XiasParser::Throw_statementConte
 	expression->m_Type = Expression::expression;
 	m_ExpressionStack.push(expression);
 	SetLine(ctx, expression);
-	auto& ret = visitChildren(ctx);
+	visitChildren(ctx);
 	m_ExpressionStack.pop();
 	m_StatementStack.pop();
-	return ret;
+	return nullptr;
 }
 
 antlrcpp::Any XiasVisitor::visitTry_statement(XiasParser::Try_statementContext* ctx)
@@ -1812,9 +1979,9 @@ antlrcpp::Any XiasVisitor::visitTry_statement(XiasParser::Try_statementContext* 
 	m_StatementStack.emplace(statement);
 	statement->m_Type = Statement::try_statement;
 	SetLine(ctx, statement);
-	auto& ret = visitChildren(ctx);
+	visitChildren(ctx);
 	m_StatementStack.pop();
-	return ret;
+	return nullptr;
 }
 
 antlrcpp::Any XiasVisitor::visitCatch_clause(XiasParser::Catch_clauseContext* ctx)
@@ -1824,9 +1991,9 @@ antlrcpp::Any XiasVisitor::visitCatch_clause(XiasParser::Catch_clauseContext* ct
 	m_StatementStack.emplace(statement);
 	statement->m_Type = Statement::catch_clause;
 	SetLine(ctx, statement);
-	auto& ret = visitChildren(ctx);
+	visitChildren(ctx);
 	m_StatementStack.pop();
-	return ret;
+	return nullptr;
 }
 
 antlrcpp::Any XiasVisitor::visitFinally_clause(XiasParser::Finally_clauseContext* ctx)
@@ -1836,9 +2003,9 @@ antlrcpp::Any XiasVisitor::visitFinally_clause(XiasParser::Finally_clauseContext
 	m_StatementStack.emplace(statement);
 	statement->m_Type = Statement::finally_clause;
 	SetLine(ctx, statement);
-	auto& ret = visitChildren(ctx);
+	visitChildren(ctx);
 	m_StatementStack.pop();
-	return ret;
+	return nullptr;
 }
 
 antlrcpp::Any XiasVisitor::visitException_specifier(XiasParser::Exception_specifierContext* ctx)
@@ -1851,9 +2018,9 @@ antlrcpp::Any XiasVisitor::visitException_specifier(XiasParser::Exception_specif
 	if (auto identifier = ctx->identifier())
 		statement->m_Data.emplace_back(identifier->getText());
 	SetLine(ctx, statement);
-	auto& ret = visitChildren(ctx);
+	visitChildren(ctx);
 	m_StatementStack.pop();
-	return ret;
+	return nullptr;
 }
 
 antlrcpp::Any XiasVisitor::visitException_filter(XiasParser::Exception_filterContext* ctx)
@@ -1863,9 +2030,9 @@ antlrcpp::Any XiasVisitor::visitException_filter(XiasParser::Exception_filterCon
 	m_StatementStack.emplace(statement);
 	statement->m_Type = Statement::exception_filter;
 	SetLine(ctx, statement);
-	auto& ret = visitChildren(ctx);
+	visitChildren(ctx);
 	m_StatementStack.pop();
-	return ret;
+	return nullptr;
 }
 
 
@@ -1875,23 +2042,23 @@ int XiasVisitor::AddNamespaces(const std::string& name)
 	while ((delimiter = name.find(".", begin)) != std::string::npos)
 	{
 		const std::string subName = name.substr(begin, delimiter);
-		NamespaceInfo namespaceInfo;
-		auto& entry = m_NamespaceInfo->m_Namespaces.emplace(subName, namespaceInfo);
-		NamespaceInfo* nSpace = &entry.first->second;
+		auto entry = m_NamespaceInfo->m_Namespaces.emplace(subName,
+			std::make_shared<NamespaceInfo>());
+		std::shared_ptr<NamespaceInfo> nSpace = entry.first->second;
 		m_NamespaceInfo = nSpace;
 		nSpace->m_Name = subName;
-		m_QualifierStack.push(nSpace);
+		m_QualifierStack.push_back(nSpace);
 		begin += delimiter + 1;
 		count++;
 	}
 	const std::string subName = name.substr(begin);
-	NamespaceInfo namespaceInfo;
-	auto& entry = m_NamespaceInfo->m_Namespaces.emplace(subName, namespaceInfo);
-	NamespaceInfo* nSpace = &entry.first->second;
+	auto entry = m_NamespaceInfo->m_Namespaces.emplace(subName,
+		std::make_shared<NamespaceInfo>());
+	std::shared_ptr<NamespaceInfo> nSpace = entry.first->second;
 	m_NamespaceInfo = nSpace;
 	nSpace->m_Name = subName;
-	m_QualifierStack.push(nSpace);
-	m_NamespaceInfo = m_QualifierStack.top();
+	m_QualifierStack.push_back(nSpace);
+	m_NamespaceInfo = m_QualifierStack.back();
 	return count;
 }
 
@@ -1899,13 +2066,13 @@ void XiasVisitor::RemoveNamespaces(int amount)
 {
 	while (amount > 0)
 	{
-		m_QualifierStack.pop();
+		m_QualifierStack.pop_back();
 		amount--;
 	}
 	if (m_QualifierStack.empty())
-		m_NamespaceInfo = &m_cInfo->m_GlobalNamespace;
+		m_NamespaceInfo = m_cInfo->m_GlobalNamespace;
 	else
-		m_NamespaceInfo = m_QualifierStack.top();
+		m_NamespaceInfo = m_QualifierStack.back();
 }
 
 int XiasVisitor::AddQualifiers(const std::string& name)
@@ -1914,16 +2081,16 @@ int XiasVisitor::AddQualifiers(const std::string& name)
 	while ((delimiter = name.find(".", begin)) != std::string::npos)
 	{
 		std::string subName = name.substr(begin, delimiter);
-		NamespaceInfo* nSpace = new Xias::NamespaceInfo;
+		std::shared_ptr<NamespaceInfo> nSpace = std::make_shared<NamespaceInfo>();
 		nSpace->m_Name = subName;
-		m_QualifierStack.push(nSpace);
+		m_QualifierStack.push_back(nSpace);
 		begin += delimiter + 1;
 		count++;
 	}
-	NamespaceInfo* nSpace = new Xias::NamespaceInfo;
+	std::shared_ptr<NamespaceInfo> nSpace = std::make_shared<NamespaceInfo>();
 	nSpace->m_Name = name.substr(begin);
-	m_QualifierStack.push(nSpace);
-	m_NamespaceInfo = m_QualifierStack.top();
+	m_QualifierStack.push_back(nSpace);
+	m_NamespaceInfo = m_QualifierStack.back();
 	return count;
 }
 
@@ -1931,26 +2098,25 @@ void XiasVisitor::RemoveQualifiers(int amount)
 {
 	while (amount > 0)
 	{
-		delete m_QualifierStack.top();
-		m_QualifierStack.pop();
+		m_QualifierStack.pop_back();
 		amount--;
 	}
 	if (m_QualifierStack.empty())
-		m_NamespaceInfo = &m_cInfo->m_GlobalNamespace;
+		m_NamespaceInfo = m_cInfo->m_GlobalNamespace;
 	else
-		m_NamespaceInfo = m_QualifierStack.top();
+		m_NamespaceInfo = m_QualifierStack.back();
 }
 
 std::string XiasVisitor::CreateQualifiedName(const std::string& name)
 {
 	std::string qualifiedName;
 	size_t nameSize = name.size();
-	for (NamespaceInfo* qualifier : m_QualifierStack._Get_container())
+	for (std::shared_ptr<NamespaceInfo> qualifier : m_QualifierStack)
 	{
 		nameSize += qualifier->m_Name.size() + 1;
 	}
 	qualifiedName.reserve(nameSize);
-	for (NamespaceInfo* qualifier : m_QualifierStack._Get_container())
+	for (std::shared_ptr<NamespaceInfo> qualifier : m_QualifierStack)
 	{
 		qualifiedName += qualifier->m_Name;
 		qualifiedName += '.';
@@ -2104,6 +2270,21 @@ bool XiasVisitor::CheckMemberName(int memberCategory, LocationInfo& lInfo, const
 		return false;
 	}
 	return true;
+}
+
+void XiasVisitor::CheckParameters(LocationInfo& lInfo, std::vector<ParameterInfo>& parameters)
+{
+	// No need to check the last parameter.
+	for (int i = 0; i < (int)parameters.size() - 1; i++)
+	{
+		ParameterInfo& parameter = parameters[i];
+		for (int j = i; j < parameters.size(); j++)
+		{
+			ParameterInfo& other = parameters[i];
+			if (parameter.m_Name == other.m_Name)
+				AddMessage(lInfo, duplicate_parameter, { parameter.m_Name });
+		}
+	}
 }
 
 void XiasVisitor::AddMessage(const LocationInfo& location, unsigned int errorID, std::vector<std::string> params)

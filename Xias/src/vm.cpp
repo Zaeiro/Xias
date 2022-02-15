@@ -2,15 +2,20 @@
 
 #include "types.h"
 #include "object.h"
-#include "memory.h"
+#include "messages.h"
 #include "compilation_unit.h"
+#include "utils.h"
 #include "XiasLexer.h"
 #include "XiasParser.h"
 #include "XiasVisitor.h"
+#include "XiasErrorHandler.h"
 
 #include "antlr4-runtime.h"
 
 #include <iostream>
+#include <memory>
+#include <cstring>
+#include <cmath>
 
 #define AS_DOUBLE(value) (value->as.Double)
 #define AS_FLOAT(value) (value->as.Float)
@@ -128,6 +133,25 @@ namespace Xias {
 		{ CompilationMessage::Severity::Fatal, "No method found matching the signature '{0}'" },
 		{ CompilationMessage::Severity::Fatal, "The type or namespace '{0}' could not be found, you may be missing a using directive" },
 		{ CompilationMessage::Severity::Fatal, "A local named '{0}' cannot be declared in this scope because that name is used in an enclosing local scope to define a local or parameter" },
+		{ CompilationMessage::Severity::Fatal, "'{0}' cannot be used as a class name" }, // 19
+		{ CompilationMessage::Severity::Fatal, "The parameter name '{0}' is a duplicate" },
+		{ CompilationMessage::Severity::Fatal, "The name '{0}' does not exist in the current context" },
+		{ CompilationMessage::Severity::Fatal, "The name '{0}' is not allowed" },
+		{ CompilationMessage::Severity::Fatal, "Arrays are not yet supported" },
+		{ CompilationMessage::Severity::Fatal, "The left-hand side of an assignment must be a variable, property or indexer" }, // 24
+		{ CompilationMessage::Severity::Fatal, "Cannot convert method group '{0}' to type '{1}'. Did you intend to invoke the method?" },
+		{ CompilationMessage::Severity::Fatal, "'{0}' is a type, which is not valid in the current context" },
+		{ CompilationMessage::Severity::Fatal, "Cannot implicitly convert type 'void' to '{0}'" },
+		{ CompilationMessage::Severity::Fatal, "'{0}' is a namespace but used like a variable" },
+		{ CompilationMessage::Severity::Fatal, "Cannot assign to an rvalue" }, // 29
+		{ CompilationMessage::Severity::Fatal, "Types '{0}' and '{1}' are not compatible" },
+		{ CompilationMessage::Severity::Fatal, "Type of conditional expression cannot be determined because '{0}' and '{1}' implicitly convert to one another" },
+		{ CompilationMessage::Severity::Fatal, "Type of conditional expression cannot be determined because there is no implicit conversion between '{0}' and '{1}'" },
+		{ CompilationMessage::Severity::Fatal, "Method must have a return type" },
+		{ CompilationMessage::Severity::Fatal, "'{0}' is a namespace but used like a type" }, // 34
+		{ CompilationMessage::Severity::Fatal, "The operand of an increment or decrement operator must be a variable, property or indexer" },
+		{ CompilationMessage::Severity::Fatal, "Type '{0}' already defines a member called '{1}' with the same parameter types" },
+
 	};
 
 	Vm::Vm()
@@ -138,6 +162,7 @@ namespace Xias {
 		m_StackSize = 64;
 		sp = m_Stack.data();
 		m_StackBack = sp;
+		m_GlobalNamespace = AddInfo(nullptr, nullptr, InfoHierarchyMember::Namespace);
 
 		m_BytesAllocated = 0;
 		m_NextGC = 1024 * 4;
@@ -167,38 +192,48 @@ namespace Xias {
 		XiasLexer lexer(&input);
 		antlr4::CommonTokenStream tokens(&lexer);
 		XiasParser parser(&tokens);
+		const Ref<antlr4::ANTLRErrorStrategy> handler = std::static_pointer_cast<antlr4::ANTLRErrorStrategy>(std::make_shared<XiasErrorHandler>());
+		parser.setErrorHandler(handler);
 		XiasParser::Compilation_unitContext* tree = parser.compilation_unit();
 		stream.close();
 
 		XiasVisitor visitor;
-		Xias::CompilationUnit unitInfo = visitor.visitCompilation_unit(tree).as<Xias::CompilationUnit>();
-		if (LogMessages(unitInfo.m_Messages))
+		std::shared_ptr<CompilationUnit> unitInfo = visitor.visitCompilation_unit(tree).as<std::shared_ptr<CompilationUnit>>();
+		if (LogMessages(unitInfo->m_Messages))
 		{
-			GenerateClassInfo(unitInfo);
+			GenerateClassInfo(*unitInfo);
 			//m_CompilationUnits.emplace_back(unitInfo);
-			Compile(unitInfo);
+			Compile(*unitInfo);
 		}
 
+		m_CurrentCompilationUnit++;
 		return false;
 	}
 
 	bool Vm::Compile(CompilationUnit& compilationUnit)
 	{
-		for (const ClassInfo& cInfo : compilationUnit.m_Classes)
+		for (ClassInfo& cInfo : compilationUnit.m_Classes)
 		{
 			RegisterClass(cInfo);
+			if (!LogMessages())
+				MarkClassForRemoval(GetClass(cInfo.m_Name));
 		}
 
-		for (const ClassInfo& cInfo : compilationUnit.m_Classes)
+		for (ClassInfo& cInfo : compilationUnit.m_Classes)
 		{
 			SetParent(cInfo);
+			if (!LogMessages())
+				MarkClassForRemoval(GetClass(cInfo.m_Name));
 		}
 
 		for (ClassInfo& cInfo : compilationUnit.m_Classes)
 		{
 			CompileClass(cInfo);
+			if (!LogMessages())
+				MarkClassForRemoval(GetClass(cInfo.m_Name));
 		}
 
+		RemoveClasses();
 		return true;
 	}
 
@@ -234,7 +269,7 @@ namespace Xias {
 		if (interned) return interned;
 
 		char* heapChars = AllocArray<char>(length + 1);
-		memcpy(heapChars, chars, length);
+		std::memcpy(heapChars, chars, length);
 		heapChars[length] = '\0';
 		return AllocateString(heapChars, length);
 	}
@@ -246,7 +281,7 @@ namespace Xias {
 		if (interned) return interned;
 
 		char* heapChars = AllocArray<char>(length + 1);
-		memcpy(heapChars, string.c_str(), length);
+		std::memcpy(heapChars, string.c_str(), length);
 		heapChars[length] = '\0';
 		return AllocateString(heapChars, length);
 	}
@@ -274,12 +309,126 @@ namespace Xias {
 		return Value{ 0U };
 	}
 
+	std::shared_ptr<InfoHierarchyMember> Vm::FindInfo(const std::string& qualifiedName, size_t compilationUnitID)
+	{
+		return FindInfoImpl(m_GlobalNamespace, SplitQualifiedName(qualifiedName), compilationUnitID);
+	}
+
+	std::shared_ptr<InfoHierarchyMember> Vm::FindInfo(std::shared_ptr<std::string> qualifiedName, size_t compilationUnitID)
+	{
+		return FindInfoImpl(m_GlobalNamespace, SplitQualifiedName(qualifiedName), compilationUnitID);
+	}
+
+	std::shared_ptr<InfoHierarchyMember> Vm::FindMemberInfo(std::shared_ptr<InfoHierarchyMember> info, std::string_view name, size_t compilationUnitID)
+	{
+		if (compilationUnitID == -1) compilationUnitID = m_CurrentCompilationUnit;
+		auto range = info->m_Children.equal_range(name);
+		for (auto it = range.first; it != range.second; ++it)
+		{
+			// TODO: Each compilation unit should have a set of other units it may access
+			// This would represent include directives
+			if (it->second->m_CompilationUnitID == compilationUnitID)
+			{
+				return it->second;
+			}
+		}
+		return AddInfo(nullptr, nullptr, InfoHierarchyMember::NotFound);
+	}
+
+	std::shared_ptr<InfoHierarchyMember> Vm::FindAccessibleMemberInfo(std::shared_ptr<InfoHierarchyMember> info, std::string_view name, size_t compilationUnitID)
+	{
+		if (compilationUnitID == -1) compilationUnitID = m_CurrentCompilationUnit;
+		if (name.empty()) return info;
+		std::vector<std::string_view> names = SplitQualifiedName(name);
+		while (info)
+		{
+			std::shared_ptr<InfoHierarchyMember> searchedInfo = FindMemberInfo(info, names[0], compilationUnitID);
+			if (searchedInfo->m_Category != InfoHierarchyMember::NotFound)
+			{
+				info = searchedInfo;
+				break;
+			}
+			else
+				info = info->m_Parent;
+		}
+		if (info)
+			return FindInfoImpl(info->m_Parent, names, compilationUnitID);
+		else
+			return AddInfo(nullptr, nullptr, InfoHierarchyMember::NotFound);
+	}
+
+	std::vector<std::string_view> Vm::SplitQualifiedName(std::shared_ptr<std::string> name)
+	{
+		return SplitQualifiedName(*name);
+	}
+
+	std::vector<std::string_view> Vm::SplitQualifiedName(std::string_view name)
+	{
+		std::vector<std::string_view> names;
+		if (name.empty()) return names;
+		size_t begin = 0, delimiter;
+		while ((delimiter = name.find(".", begin)) != std::string::npos)
+		{
+			names.push_back(name.substr(begin, delimiter - begin));
+			begin = delimiter + 1;
+		}
+		names.push_back(name.substr(begin, name.size() - begin));
+		return names;
+	}
+
+	std::vector<std::string_view> Vm::SplitViewSignature(std::string_view signature)
+	{
+		std::vector<std::string_view> names;
+		size_t begin = 0, delimiter;
+		while ((delimiter = signature.find(";", begin)) != std::string::npos)
+		{
+			names.push_back(signature.substr(begin, delimiter - begin));
+			begin = delimiter + 1;
+		}
+		return names;
+	}
+
+	std::vector<std::string_view> Vm::QualifyInfo(std::shared_ptr<InfoHierarchyMember> info)
+	{
+		std::vector<std::string_view> reverseNames;
+		std::vector<std::string_view> names;
+		while (info && info->m_Name)
+		{
+			reverseNames.push_back(std::string_view(*info->m_Name));
+			info = info->m_Parent;
+		}
+		names.reserve(reverseNames.size());
+		for (int i = (int)reverseNames.size() - 1; i >= 0; i--)
+			names.push_back(reverseNames[i]);
+		return names;
+	}
+
 	x_class Vm::GetClass(const std::string& name)
 	{
-		auto iter = m_ClassNames.find(name);
-		if (iter != m_ClassNames.end())
-			return m_Classes[iter->second];
-		return nullptr;
+		std::string n;
+		if (name == "I") n = "int";
+		else if (name == "U") n = "uint";
+		else if (name == "D") n = "double";
+		else if (name == "G") n = "float";
+		else if (name == "B") n = "bool";
+		else if (name == "S") n = "String";
+		else if (name == "O") n = "Object";
+		else if (name == "V") n = "void";
+
+		if (n.empty())
+		{
+			auto iter = m_ClassNames.find(name);
+			if (iter != m_ClassNames.end())
+				return m_Classes[iter->second];
+			return nullptr;
+		}
+		else
+		{
+			auto iter = m_ClassNames.find(n);
+			if (iter != m_ClassNames.end())
+				return m_Classes[iter->second];
+			return nullptr;
+		}
 	}
 
 	//MemberInfo Vm::GetMemberInfo(const std::string& xClass, const std::string& name)
@@ -316,8 +465,19 @@ namespace Xias {
 
 	bool Vm::IsClassDescendent(const std::string& parent, const std::string& descendent)
 	{
-
-		return false;
+		std::shared_ptr<InfoHierarchyMember> p, d;
+		p = FindInfo(parent, m_CurrentCompilationUnit);
+		d = FindInfo(descendent, m_CurrentCompilationUnit);
+		if (p->m_Category != InfoHierarchyMember::Class || d->m_Category != InfoHierarchyMember::Class)
+			return false;
+		while (true)
+		{
+			if (p == d)
+				return true;
+			if (d->m_Category != InfoHierarchyMember::Class)
+				return false;
+			d = d->m_Parent;
+		}
 	}
 
 	std::vector<std::string> Vm::SplitSignature(std::string signature)
@@ -327,10 +487,10 @@ namespace Xias {
 		size_t begin = 0, delimiter;
 		while ((delimiter = signature.find(";", begin)) != std::string::npos)
 		{
-			tokens.emplace_back(signature.substr(begin, delimiter));
+			tokens.emplace_back(signature.substr(begin, delimiter - begin));
 			begin = delimiter + 1;
 		}
-		tokens.emplace_back(signature.substr(begin));
+		//tokens.emplace_back(signature.substr(begin));
 		return tokens;
 	}
 
@@ -347,7 +507,7 @@ namespace Xias {
 			for (auto& [methodSignature, methodIndex] : xClass->FunctionIndices)
 			{
 				std::vector<std::string> candidateElements = SplitSignature(methodSignature);
-				if (candidateElements.size() != elements.size() + 1)
+				if (candidateElements.size() != elements.size())
 					continue;
 				bool valid = true;
 				for (int i = 1; i < candidateElements.size(); i++)
@@ -409,7 +569,7 @@ namespace Xias {
 		if (from == nullptr || to == nullptr)
 			return nullptr;
 
-		std::string castName = to->Name + ";()" + from->Name + ';';
+		std::string castName = to->Name + ";();" + from->Name + ';';
 		auto c1 = from->ImplicitCastIndices.find(castName);
 		auto c2 = to->ImplicitCastIndices.find(castName);
 		if (c1 != from->ImplicitCastIndices.end())
@@ -488,6 +648,22 @@ namespace Xias {
 		}
 	}
 
+	void Vm::AddMessage(std::shared_ptr<InfoHierarchyMember> origin, x_ulong errorID, std::vector<std::string> params)
+	{
+		auto& message = m_Messages.emplace_back();
+		message.Line = origin->m_Location.m_Line;
+		message.Column = origin->m_Location.m_Column;
+		message.ErrorID = errorID;
+		message.Params = params;
+	}
+
+	bool Vm::LogMessages()
+	{
+		bool result = LogMessages(m_Messages);
+		m_Messages.clear();
+		return result;
+	}
+
 	bool Vm::LogMessages(std::vector<CompilationMessage>& messages)
 	{
 		bool success = true;
@@ -535,43 +711,170 @@ namespace Xias {
 		RemoveClass(xClass);
 	}
 
-	void Vm::RegisterClass(const ClassInfo& classInfo)
+	void Vm::RegisterClass(ClassInfo& classInfo)
 	{
 		x_class xClass = AddClass(classInfo.m_QualifiedName);
 		xClass->MemberCount = classInfo.m_Fields.size();
+		auto info = FindInfo(classInfo.m_QualifiedName);
+		info->m_Class = xClass;
+		xClass->Info = info;
+
+		for (auto iter = info->m_Children.begin(); iter != info->m_Children.end(); iter++)
+		{
+			std::string_view name = iter->first;
+			std::shared_ptr<InfoHierarchyMember> member = iter->second;
+			switch (member->m_Category)
+			{
+				case InfoHierarchyMember::Field:
+				case InfoHierarchyMember::Property:
+				case InfoHierarchyMember::Indexer:
+					break;
+				case InfoHierarchyMember::Method:
+				case InfoHierarchyMember::Constructor:
+				case InfoHierarchyMember::ImplicitConversion:
+				{
+					std::shared_ptr<std::string> oldName = member->m_Name;
+					std::vector<std::string_view> original = SplitViewSignature(*member->m_Name);
+					std::shared_ptr<std::string> sig = QualifySignature(info, *member->m_Name);
+					std::vector<std::string_view> tokens = SplitViewSignature(*sig);
+					for (int i = (original[0] == "void" ? 2 : 0); i < tokens.size(); i++)
+					{
+						if (i != 1)
+						{
+							std::string_view token = tokens[i];
+							if (token == "<unknown_type>")
+							{
+								AddMessage(member, no_type_or_namespace, { (std::string)original[i] });
+							}
+						}
+					}
+					std::shared_ptr<std::string> newName = std::make_unique<std::string>();
+					if (original[0] == "void") tokens[0] = "void";
+					for (auto strView : tokens)
+					{
+						*newName += strView;
+						*newName += ';';
+					}
+					if (*oldName == *newName)
+						break;
+					iter = info->m_Children.erase(iter);
+					info->m_Children.emplace(std::string_view(*newName), member);
+					member->m_Name = newName;
+
+					switch (member->m_Category)
+					{
+						case InfoHierarchyMember::Method:
+						{
+							for (MethodInfo& mInfo : classInfo.m_Methods)
+								if (mInfo.m_Signature == *oldName)
+								{
+									mInfo.m_Signature = *newName;
+									break;
+								}
+							break;
+						}
+						case InfoHierarchyMember::Constructor:
+						{
+							for (ConstructorInfo& mInfo : classInfo.m_Constructors)
+								if (mInfo.m_Signature == *oldName)
+								{
+									mInfo.m_Signature = *newName;
+									break;
+								}
+							break;
+						}
+						case InfoHierarchyMember::ImplicitConversion:
+						{
+							for (CastOperatorInfo& mInfo : classInfo.m_Casts)
+								if (mInfo.m_Signature == *oldName)
+								{
+									mInfo.m_Signature = *newName;
+									break;
+								}
+							break;
+						}
+					}
+					break;
+				}
+				default:
+					break;
+			}
+		}
+
+		for (auto [name, member] : info->m_Children)
+		{
+			switch (member->m_Category)
+			{
+				case InfoHierarchyMember::Field:
+				case InfoHierarchyMember::Property:
+				case InfoHierarchyMember::Indexer:
+					break;
+				case InfoHierarchyMember::Method:
+				{
+					FunctionObject* method = NewFunction();
+					ScopedPin methodPin = PinObject((x_object*)method);
+					method->Signature = CopyString(*member->m_Name);
+					std::vector<std::string_view> signature = SplitViewSignature(*member->m_Name);
+					method->Arity = (int)signature.size() - 2;
+					AddMethod(xClass, method);
+					break;
+				}
+				case InfoHierarchyMember::Constructor:
+				{
+					FunctionObject* ctor = NewFunction();
+					ScopedPin ctorPin = PinObject((x_object*)ctor);
+					ctor->Signature = CopyString(*member->m_Name);
+					std::vector<std::string_view> signature = SplitViewSignature(*member->m_Name);
+					ctor->Arity = (int)signature.size() - 2;
+					AddMethod(xClass, ctor);
+					break;
+				}
+				case InfoHierarchyMember::ImplicitConversion:
+				{
+					FunctionObject* method = NewFunction();
+					ScopedPin methodPin = PinObject((x_object*)method);
+					method->Signature = CopyString(*member->m_Name);
+					method->Arity = 1;
+					AddImplicitCast(xClass, method);
+					break;
+				}
+				default:
+					break;
+			}
+		}
 
 		for (const FieldInfo& fInfo : classInfo.m_Fields)
 		{
 			AddField(xClass, fInfo.m_Name);
 		}
 
-		if (classInfo.m_Constructors.size())
-		{
-			for (const ConstructorInfo& ctorInfo : classInfo.m_Constructors)
-			{
-				FunctionObject* ctor = NewFunction();
-				ScopedPin ctorPin = PinObject((x_object*)ctor);
-				ctor->Signature = CopyString(ctorInfo.m_Signature);
-				ctor->Arity = ctorInfo.m_Parameters.size();
-				AddMethod(xClass, ctor);
-			}
-		}
-		else
-		{
-			FunctionObject* ctor = NewFunction();
-			ScopedPin ctorPin = PinObject((x_object*)ctor);
-			ctor->Signature = CopyString(";<>;");
-			AddMethod(xClass, ctor);
-		}
+		//if (classInfo.m_Constructors.size())
+		//{
+		//	for (const ConstructorInfo& ctorInfo : classInfo.m_Constructors)
+		//	{
+		//		FunctionObject* ctor = NewFunction();
+		//		ScopedPin ctorPin = PinObject((x_object*)ctor);
+		//		ctor->Signature = CopyString(ctorInfo.m_Signature);
+		//		ctor->Arity = ctorInfo.m_Parameters.size();
+		//		AddMethod(xClass, ctor);
+		//	}
+		//}
+		//else
+		//{
+		//	FunctionObject* ctor = NewFunction();
+		//	ScopedPin ctorPin = PinObject((x_object*)ctor);
+		//	ctor->Signature = CopyString(";<>;");
+		//	AddMethod(xClass, ctor);
+		//}
 
-		for (const MethodInfo& methodInfo : classInfo.m_Methods)
-		{
-			FunctionObject* method = NewFunction();
-			ScopedPin methodPin = PinObject((x_object*)method);
-			method->Signature = CopyString(methodInfo.m_Signature);
-			method->Arity = methodInfo.m_Parameters.size();
-			AddMethod(xClass, method);
-		}
+		//for (const MethodInfo& methodInfo : classInfo.m_Methods)
+		//{
+		//	FunctionObject* method = NewFunction();
+		//	ScopedPin methodPin = PinObject((x_object*)method);
+		//	method->Signature = CopyString(methodInfo.m_Signature);
+		//	method->Arity = methodInfo.m_Parameters.size();
+		//	AddMethod(xClass, method);
+		//}
 
 		//for (const OperatorInfo& operatorInfo : classInfo.m_Operators)
 		//{
@@ -582,20 +885,20 @@ namespace Xias {
 		//	AddMethod(xClass, method);
 		//}
 
-		for (const CastOperatorInfo& operatorInfo : classInfo.m_Casts)
-		{
-			FunctionObject* method = NewFunction();
-			ScopedPin methodPin = PinObject((x_object*)method);
-			method->Signature = CopyString(operatorInfo.m_Signature);
-			method->Arity = 1;
-			if (operatorInfo.m_Type == CastOperatorInfo::Implicit)
-				AddImplicitCast(xClass, method);
-			else
-				AddMethod(xClass, method);
-		}
+		//for (const CastOperatorInfo& operatorInfo : classInfo.m_Casts)
+		//{
+		//	FunctionObject* method = NewFunction();
+		//	ScopedPin methodPin = PinObject((x_object*)method);
+		//	method->Signature = CopyString(operatorInfo.m_Signature);
+		//	method->Arity = 1;
+		//	if (operatorInfo.m_Type == CastOperatorInfo::Implicit)
+		//		AddImplicitCast(xClass, method);
+		//	else
+		//		AddMethod(xClass, method);
+		//}
 	}
 
-	void Vm::SetParent(const ClassInfo& classInfo)
+	void Vm::SetParent(ClassInfo& classInfo)
 	{
 		size_t functionCount = 0;
 		x_class xClass = GetClass(classInfo.m_QualifiedName);
@@ -653,6 +956,12 @@ namespace Xias {
 		defaultInitBody.m_Type = Statement::block;
 		for (const FieldInfo& fInfo : classInfo.m_Fields)
 		{
+			//x_class fClass = GetClass(fInfo.m_Type);
+			//if (!fClass)
+			//{
+			//	CompilationError(xClass, "CompileClass: Could not find class '" + fInfo.m_Type + "'!");
+			//	return;
+			//}
 			Statement& statementExpression = defaultInitBody.m_Children.emplace_back();
 			statementExpression.m_Type = Statement::statement_expression;
 			Expression& expression = statementExpression.m_Expressions.emplace_back();
@@ -661,6 +970,8 @@ namespace Xias {
 			assignment.m_Type = Expression::assignment;
 			Expression& left = assignment.m_Children.emplace_back();
 			left.m_Type = Expression::primary_no_array_creation_base;
+			left.m_Line = fInfo.m_Location.m_Line;
+			left.m_Column = fInfo.m_Location.m_Column;
 			Expression& name = left.m_Children.emplace_back();
 			name.m_Type = Expression::simple_name;
 			name.m_Data.emplace_back(fInfo.m_Name);
@@ -690,31 +1001,28 @@ namespace Xias {
 		//	CompileField(fieldID, fInfo, defaultInit);
 		//}
 
-		if (!Compile(xClass, defaultInit, defaultInitBody))
-			return;
+		Compile(xClass, defaultInit, {}, defaultInitBody);
 
 		for (ConstructorInfo& mInfo : classInfo.m_Constructors)
 		{
-			FunctionObject* ctor = DuplicateFunction(defaultInit);
-			ScopedPin ctorPin = PinObject((x_object*)ctor);
-			ctor->Signature = CopyString(mInfo.m_Signature);
-			ctor->Arity = mInfo.m_Parameters.size();
-			if (!Compile(xClass, ctor, mInfo.m_Body))
-				return;
-			ctor->Code.Code.emplace_back(Instruction::func_return);
 			x_method presentctor = GetMethod(xClass, mInfo.m_Signature);
+			x_method ctor = DuplicateFunction(defaultInit);
+			ScopedPin ctorPin = PinObject((x_object*)ctor);
+			ctor->Signature = presentctor->Signature;
+			ctor->Arity = presentctor->Arity;
+			Compile(xClass, ctor, mInfo.m_Parameters, mInfo.m_Body);
+			ctor->Code.Code.emplace_back(Instruction::func_return);
 			DuplicateFunction(ctor, presentctor);
 		}
 
 		for (MethodInfo& mInfo : classInfo.m_Methods)
 		{
-			FunctionObject* method = NewFunction();
-			ScopedPin methodPin = PinObject((x_object*)method);
-			method->Signature = CopyString(mInfo.m_Signature);
-			method->Arity = mInfo.m_Parameters.size();
-			if (!Compile(xClass, method, mInfo.m_Body))
-				return;
 			x_method presentMethod = GetMethod(xClass, mInfo.m_Signature);
+			x_method method = NewFunction();
+			ScopedPin methodPin = PinObject((x_object*)method);
+			method->Signature = presentMethod->Signature;
+			method->Arity = presentMethod->Arity;
+			Compile(xClass, method, mInfo.m_Parameters, mInfo.m_Body);
 			DuplicateFunction(method, presentMethod);
 		}
 
@@ -732,13 +1040,12 @@ namespace Xias {
 
 		for (CastOperatorInfo& mInfo : classInfo.m_Casts)
 		{
-			FunctionObject* method = NewFunction();
-			ScopedPin methodPin = PinObject((x_object*)method);
-			method->Signature = CopyString(mInfo.m_Signature);
-			method->Arity = 1;
-			if (!Compile(xClass, method, mInfo.m_Body))
-				return;
 			x_method presentMethod = GetMethod(xClass, mInfo.m_Signature);
+			x_method method = NewFunction();
+			ScopedPin methodPin = PinObject((x_object*)method);
+			method->Signature = presentMethod->Signature;
+			method->Arity = presentMethod->Arity;
+			Compile(xClass, method, mInfo.m_Parameters, mInfo.m_Body);
 			DuplicateFunction(method, presentMethod);
 		}
 	}
@@ -770,24 +1077,80 @@ namespace Xias {
 		xClass->Functions.emplace_back(method);
 	}
 
-	bool Vm::Compile(x_class xClass, x_method method, Statement& block)
+	bool Vm::Compile(x_class xClass, x_method method, const std::vector<ParameterInfo>& parameters, Statement& block)
 	{
-		std::vector<CompilationMessage> messages = m_Compiler.Compile(xClass, method, block);
+		std::vector<CompilationMessage> messages = m_Compiler.Compile(xClass, method, parameters, block);
 		bool success = LogMessages(messages);
 		if (!success)
-			RemoveClass(xClass);
+			MarkClassForRemoval(xClass);
 		return success;
 	}
 
 	void Vm::GenerateClassInfo(const CompilationUnit& unit)
 	{
+		for (const auto& nspace : unit.m_GlobalNamespace->m_Namespaces)
+		{
+			AddNamespace(m_GlobalNamespace, *nspace.second);
+		}
+
+		for (const auto& cInfo : unit.m_Classes)
+		{
+			size_t length = cInfo.m_QualifiedName.find_last_of('.');
+			std::string qualifiers = cInfo.m_QualifiedName.substr(0, length == std::string::npos ? 0 : length);
+			std::shared_ptr<InfoHierarchyMember> newClass = AddInfo(FindInfo(qualifiers, m_CurrentCompilationUnit),
+				std::make_shared<std::string>(cInfo.m_Name), InfoHierarchyMember::Class);
+			for (auto& member : cInfo.m_Fields)
+			{
+				std::shared_ptr<InfoHierarchyMember> xMember = AddInfo(newClass,
+					std::make_shared<std::string>(member.m_Name), InfoHierarchyMember::Field);
+				xMember->m_Modifiers = std::make_unique<Modifiers>(member.m_Modifiers);
+				xMember->m_Location = member.m_Location;
+			}
+			for (auto& member : cInfo.m_Properties)
+			{
+				std::shared_ptr<InfoHierarchyMember> xMember = AddInfo(newClass,
+					std::make_shared<std::string>(member.m_Name), InfoHierarchyMember::Property);
+				xMember->m_Modifiers = std::make_unique<Modifiers>(member.m_Modifiers);
+				xMember->m_Location = member.m_Location;
+			}
+			for (auto& member : cInfo.m_Methods)
+			{
+				std::shared_ptr<InfoHierarchyMember> xMember = AddInfo(newClass,
+					std::make_shared<std::string>(member.m_Signature), InfoHierarchyMember::Method);
+				xMember->m_Modifiers = std::make_unique<Modifiers>(member.m_Modifiers);
+				xMember->m_Location = member.m_Location;
+			}
+			for (auto& member : cInfo.m_Casts)
+			{
+				std::shared_ptr<InfoHierarchyMember> xMember = AddInfo(newClass,
+					std::make_shared<std::string>(member.m_Signature), InfoHierarchyMember::ImplicitConversion);
+				xMember->m_Modifiers = std::make_unique<Modifiers>(member.m_Modifiers);
+				xMember->m_Location = member.m_Location;
+			}
+			for (auto& member : cInfo.m_Constructors)
+			{
+				std::shared_ptr<InfoHierarchyMember> xMember = AddInfo(newClass,
+					std::make_shared<std::string>(member.m_Signature), InfoHierarchyMember::Constructor);
+				xMember->m_Modifiers = std::make_unique<Modifiers>(member.m_Modifiers);
+				xMember->m_Location = member.m_Location;
+			}
+			if (cInfo.m_Constructors.empty())
+			{
+				std::shared_ptr<InfoHierarchyMember> xMember = AddInfo(newClass,
+					std::make_shared<std::string>(";<>;"), InfoHierarchyMember::Constructor);
+				xMember->m_Modifiers = std::make_unique<Modifiers>();
+				xMember->m_Modifiers->m_Access = AccessModifier::Public;
+				xMember->m_Location = cInfo.m_Location;
+			}
+		}
+
 		for (auto& xClass : unit.m_Classes)
 		{
 			ClassCompilationInfo cInfo;
 			for (auto& member : xClass.m_Fields)
 			{
 				Member xMember;
-				xMember.m_ContainingClass = xClass.m_Name;
+				xMember.m_ContainingClass = xClass.m_QualifiedName;
 				xMember.m_Modifiers = member.m_Modifiers;
 				xMember.m_Type = Member::Category::Field;
 				xMember.m_Data = member.m_Type;
@@ -796,7 +1159,7 @@ namespace Xias {
 			for (auto& member : xClass.m_Properties)
 			{
 				Member xMember;
-				xMember.m_ContainingClass = xClass.m_Name;
+				xMember.m_ContainingClass = xClass.m_QualifiedName;
 				xMember.m_Modifiers = member.m_Modifiers;
 				xMember.m_Type = Member::Category::Property;
 				xMember.m_Data = member.m_Type;
@@ -805,7 +1168,7 @@ namespace Xias {
 			for (auto& member : xClass.m_Methods)
 			{
 				Member xMember;
-				xMember.m_ContainingClass = xClass.m_Name;
+				xMember.m_ContainingClass = xClass.m_QualifiedName;
 				xMember.m_Modifiers = member.m_Modifiers;
 				xMember.m_Type = Member::Category::Method;
 				xMember.m_Data = member.m_Type;
@@ -814,7 +1177,7 @@ namespace Xias {
 			for (auto& member : xClass.m_Casts)
 			{
 				Member xMember;
-				xMember.m_ContainingClass = xClass.m_Name;
+				xMember.m_ContainingClass = xClass.m_QualifiedName;
 				xMember.m_Modifiers = member.m_Modifiers;
 				xMember.m_Type = Member::Category::Method;
 				std::string name = GetMethodName(member.m_Signature);
@@ -823,14 +1186,105 @@ namespace Xias {
 			for (auto& member : xClass.m_Constructors)
 			{
 				Member xMember;
-				xMember.m_ContainingClass = xClass.m_Name;
+				xMember.m_ContainingClass = xClass.m_QualifiedName;
 				xMember.m_Modifiers = member.m_Modifiers;
 				xMember.m_Type = Member::Category::Constructor;
 				std::string name = GetMethodName(member.m_Signature);
 				cInfo.m_Members.emplace(name, xMember);
 			}
-			m_ClassInfo.emplace(xClass.m_Name, cInfo);
+			m_ClassInfo.emplace(xClass.m_QualifiedName, cInfo);
 		}
+	}
+
+	void Vm::AddNamespace(std::shared_ptr<InfoHierarchyMember> parent, const NamespaceInfo& info)
+	{
+		std::shared_ptr<InfoHierarchyMember> newInfo = AddInfo(parent,
+			std::make_shared<std::string>(info.m_Name), InfoHierarchyMember::Namespace);
+		for (const auto& nspace : info.m_Namespaces)
+		{
+			AddNamespace(newInfo, *nspace.second);
+		}
+	}
+
+	std::shared_ptr<InfoHierarchyMember> Vm::AddInfo(std::shared_ptr<InfoHierarchyMember> parent,
+		std::shared_ptr<std::string> name, InfoHierarchyMember::Category category)
+	{
+		std::shared_ptr<InfoHierarchyMember> info = std::make_shared<InfoHierarchyMember>();
+		info->m_Parent = parent;
+		info->m_Name = name;
+		info->m_Class = nullptr;
+		info->m_Modifiers = nullptr;
+		info->m_CompilationUnitID = m_CurrentCompilationUnit;
+		info->m_Category = category;
+		if (parent)
+			parent->m_Children.emplace(std::string_view(*info->m_Name), info);
+		return info;
+	}
+
+	std::shared_ptr<InfoHierarchyMember> Vm::FindInfoImpl(std::shared_ptr<InfoHierarchyMember> parent, std::vector<std::string_view> names, size_t compilationUnitID)
+	{
+		if (compilationUnitID == -1) compilationUnitID = m_CurrentCompilationUnit;
+		if (names.empty()) return parent;
+		std::shared_ptr<InfoHierarchyMember> info = parent;
+		for (auto name : names)
+		{
+			info = FindMemberInfo(info, name, compilationUnitID);
+			if (info->m_Category == InfoHierarchyMember::NotFound)
+				return info;
+		}
+		return info;
+	}
+
+	std::shared_ptr<std::string> Vm::QualifySignature(std::shared_ptr<InfoHierarchyMember> owner, const std::string& signature, size_t compilationUnitID)
+	{
+		if (compilationUnitID == -1) compilationUnitID = m_CurrentCompilationUnit;
+		std::shared_ptr<std::string> qualified = std::make_unique<std::string>();
+		std::vector<std::string_view> tokens = SplitViewSignature(signature);
+		std::vector<std::shared_ptr<InfoHierarchyMember>> infos;
+		for (int i = 0; i < tokens.size(); i++)
+		{
+			if (i != 1)
+			{
+				if (i == 0 && tokens[0].empty())
+					infos.push_back(AddInfo(nullptr, nullptr, InfoHierarchyMember::NotFound));
+				else
+					infos.push_back(FindAccessibleMemberInfo(owner, tokens[i], compilationUnitID));
+			}
+		}
+		int index = 0;
+		for (int i = 0; i < infos.size() + 1; i++)
+		{
+			if (i == 1)
+			{
+				*qualified += tokens[1];
+				*qualified += ';';
+			}
+			else
+			{
+				size_t newSize = qualified->size();
+				std::vector<std::string_view> names;
+				if (infos[index]->m_Category != InfoHierarchyMember::NotFound)
+					names = QualifyInfo(infos[index]);
+				else
+				{
+					if (i == 0 && tokens[0].empty())
+						names.push_back("");
+					else
+						names.push_back("<unknown_type>");
+				}
+				for (std::string_view name : names)
+					newSize += name.size() + 1;
+				qualified->reserve(newSize);
+				for (std::string_view name : names)
+				{
+					*qualified += name;
+					*qualified += '.';
+				}
+				qualified->back() = ';';
+				index++;
+			}
+		}
+		return qualified;
 	}
 
 	//void Vm::CompileField(x_ulong fieldID, const FieldInfo& fieldInfo, x_method method)
@@ -1143,6 +1597,24 @@ namespace Xias {
 		return xClass;
 	}
 
+	void Vm::MarkClassForRemoval(x_class xClass)
+	{
+		if (xClass == nullptr) return;
+		for (x_class c : m_ClassesToRemove)
+			if (c == xClass) return;
+		m_ClassesToRemove.push_back(xClass);
+	}
+
+	bool Vm::RemoveClasses()
+	{
+		if (m_ClassesToRemove.empty())
+			return false;
+		for (x_class xClass : m_ClassesToRemove)
+			RemoveClass(xClass);
+		m_ClassesToRemove.clear();
+		return true;
+	}
+
 	void Vm::RemoveClass(x_class xClass)
 	{
 		if (!xClass)
@@ -1163,6 +1635,7 @@ namespace Xias {
 			Error("RemoveClass: Attempting to remove \"" + xClass->Name + "\", an ambigious class!");
 			return;
 		}
+		xClass->Info->m_Class = nullptr;
 
 		m_ClassNames.erase(iter);
 		delete xClass;
@@ -1228,7 +1701,7 @@ namespace Xias {
 		newFrame->Locals.reserve(function->LocalCount);
 	}
 
-	void Vm::push(Value& value)
+	void Vm::push(Value value)
 	{
 		*sp++ = value;
 	}
@@ -1294,7 +1767,7 @@ namespace Xias {
 				}
 				case Instruction::float_pow:
 				{
-					LEFT_OPERAND(Float) = (x_float)std::powf(LEFT_OPERAND(Float), RIGHT_OPERAND(Float));
+					LEFT_OPERAND(Float) = (x_float)std::pow(LEFT_OPERAND(Float), RIGHT_OPERAND(Float));
 					DEC();
 					break;
 				}
@@ -1348,8 +1821,8 @@ namespace Xias {
 					StringObject* right = ((StringObject*)RIGHT_OPERAND(Object));
 					x_ulong length = left->Size + right->Size;
 					char* chars = AllocArray<char>(length + 1);
-					memcpy(chars, left->Chars, left->Size);
-					memcpy(chars + left->Size, right->Chars, right->Size);
+					std::memcpy(chars, left->Chars, left->Size);
+					std::memcpy(chars + left->Size, right->Chars, right->Size);
 					chars[length] = '\0';
 					LEFT_OPERAND(Object) = (x_object*)TakeString(chars, length);
 					DEC();

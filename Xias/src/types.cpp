@@ -20,8 +20,8 @@ std::string Xias::GetTypeInitial(const std::string& type)
 	else if (result == "double") result = "D;";
 	else if (result == "float") result = "F;";
 	else if (result == "bool") result = "B;";
-	else if (result == "string") result = "S;";
-	else if (result == "object") result = "O";
+	else if (result == "String") result = "S;";
+	else if (result == "Object") result = "O";
 	else if (result == "void") result = "V;";
 	else result += ';';
 	if ((delimiter = type.find("[")) != std::string::npos)

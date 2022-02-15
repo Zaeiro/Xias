@@ -6,6 +6,7 @@
 
 #include <vector>
 #include <string>
+#include <memory>
 
 namespace Xias {
 
@@ -394,9 +395,7 @@ namespace Xias {
 	struct ParameterInfo
 	{
 		std::string m_Name;
-
 		Expression m_Default;
-
 		std::string m_Type;
 	};
 
@@ -490,6 +489,7 @@ namespace Xias {
 		std::string m_Signature;
 		Modifiers m_Modifiers;
 		LocationInfo m_Location;
+		std::vector<ParameterInfo> m_Parameters;
 		Statement m_Body;
 	};
 
@@ -498,6 +498,7 @@ namespace Xias {
 		std::string m_Name;
 		std::string m_QualifiedName;
 		Modifiers m_Modifiers;
+		LocationInfo m_Location;
 
 		std::vector<MemberInfo> m_Members;
 		//std::unordered_map<std::string, MemberInfo> m_Members;
@@ -515,7 +516,7 @@ namespace Xias {
 	struct NamespaceInfo
 	{
 		std::string m_Name;
-		std::unordered_map<std::string, NamespaceInfo> m_Namespaces;
+		std::unordered_map<std::string, std::shared_ptr<NamespaceInfo>> m_Namespaces;
 
 		std::vector<std::string> m_Classes;
 	};
@@ -523,7 +524,7 @@ namespace Xias {
 	struct CompilationUnit
 	{
 		std::vector<UsingInfo> m_Usings;
-		NamespaceInfo m_GlobalNamespace;
+		std::shared_ptr<NamespaceInfo> m_GlobalNamespace;
 
 		std::vector<ClassInfo> m_Classes;
 
@@ -549,6 +550,30 @@ namespace Xias {
 	{
 		Modifiers m_Modifiers;
 		std::unordered_map<std::string, Member> m_Members;
+	};
+
+	struct InfoHierarchyMember
+	{
+		std::shared_ptr<std::string> m_Name;
+		std::shared_ptr<InfoHierarchyMember> m_Parent;
+		std::unordered_multimap<std::string_view, std::shared_ptr<InfoHierarchyMember>> m_Children;
+		x_class m_Class = nullptr;
+		LocationInfo m_Location;
+		std::shared_ptr<Modifiers> m_Modifiers;
+		size_t m_CompilationUnitID;
+		enum Category
+		{
+			Namespace,
+			Class,
+			Field,
+			Property,
+			Indexer,
+			Method,
+			Constructor,
+			ImplicitConversion,
+			Inaccessible,
+			NotFound,
+		} m_Category;
 	};
 
 }
